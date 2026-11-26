@@ -1,0 +1,234 @@
+/* Warm creams and browns, soft on the eyes. build.ps1 checks the contrast of every text and border pair. */
+:root {
+  --cream: #fbf6ec; --card: #fffdf8; --title: #94401c; --heading: #33261c; --paper: #fffcf5;
+  --text: #3b2f25; --muted: #5c4a3a; --line: #e6dccb; --border: #8a6d4b; --panel: #f3ead9;
+  --accent: #6b3f1d; --accent-bg: #f3e3c8; --primary: #5a3a22; --primary-hover: #4a2f1b;
+  --warn-bg: #f7e9cf; --warn: #6b3f12; --warn-b: #b07a3a;
+  --ok-bg: #e7ecd5; --ok: #3d4f1e; --ok-b: #6b7d3a;
+  --bad-bg: #f6dcd5; --bad: #7a2418; --bad-b: #b0503e;
+  --mark: #94401c;
+}
+* { box-sizing: border-box; }
+/* Room for a scrollbar is kept, so the page never shifts sideways when one appears. */
+html { scrollbar-gutter: stable; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 17px; line-height: 1.6; color: var(--text); background: var(--cream); }
+main { max-width: 760px; margin: 0 auto; padding: 12px 16px 24px; }
+[hidden] { display: none !important; }
+.bar { position: relative; padding-right: 76px; min-height: 48px; display: flex; align-items: center; border-bottom: 3px solid var(--title); padding-bottom: 8px; margin-bottom: 12px; }
+h1 { font-size: 1.25rem; margin: 0; color: var(--title); white-space: nowrap; }
+.lead { font-size: 1.15rem; font-weight: 600; margin: 8px 0; display: block; color: var(--heading); }
+button { font: inherit; min-height: 44px; padding: 8px 14px; border: 2px solid var(--accent); border-radius: 8px; background: var(--card); color: var(--accent); font-weight: 600; cursor: pointer; }
+button:hover { background: var(--accent-bg); }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--paper); }
+button.primary:hover { background: var(--primary-hover); }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.center { justify-content: center; }
+.new { position: absolute; top: 0; right: 0; min-height: 40px; padding: 6px 14px; }
+.muted { color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Menu */
+.big { display: block; width: 100%; text-align: left; font-size: 1.1rem; padding: 14px 16px; margin: 8px 0; }
+.big small { display: block; font-weight: 400; color: var(--muted); font-size: 0.9rem; }
+
+/* A lesson */
+.themes { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.themes button { min-height: 40px; padding: 4px 10px; font-size: 0.92rem; }
+.themes button[aria-current="step"] { background: var(--primary); border-color: var(--primary); color: var(--paper); }
+.tag-line { margin: 4px 0; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--title); }
+.intro { margin: 0 0 6px; color: var(--muted); font-size: 0.95rem; }
+.intro:empty { display: none; }
+.prompt { font-size: 1.15rem; margin: 4px 0 8px; }
+.prompt:focus, h2:focus, .data:focus { outline: none; }
+.feedback { padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
+.feedback:empty { padding: 0; margin: 0; }
+.good { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-b); }
+.bad { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad-b); }
+.info, .almost { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-b); }
+
+/* The data: a list of values (in the order collected), or a frequency table. */
+.data { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 8px 12px; margin: 8px 0; }
+.data-what { margin: 0 0 4px; font-size: 0.9rem; color: var(--muted); }
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chips li { min-width: 2.4em; text-align: center; padding: 1px 6px; border-radius: 4px; background: var(--panel); font-variant-numeric: tabular-nums; }
+.chips li.now { outline: 3px solid var(--title); background: var(--card); font-weight: 700; }
+.chips li.used { background: var(--panel); color: var(--muted); text-decoration: line-through; }
+table.freq { border-collapse: collapse; margin: 4px 0; }
+table.freq th, table.freq td { border: 1px solid var(--border); padding: 4px 12px; text-align: left; font-variant-numeric: tabular-nums; }
+table.freq thead th { background: var(--panel); }
+table.freq tfoot th, table.freq tfoot td { font-weight: 700; }
+.data-scroll { max-width: 100%; overflow-x: auto; }
+
+/* Choices: words, stacked; a right pick turns green and a wrong one red, with a mark so color is not the only sign. */
+.choices { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.choice { text-align: left; font-weight: 400; color: var(--text); padding: 8px 12px; width: 100%; }
+.choice[aria-pressed="true"] { background: var(--accent-bg); border-width: 3px; font-weight: 600; }
+.choice[aria-pressed="true"]::before { content: "\2713  "; }
+.choice.right { background: var(--ok-bg); border-color: var(--ok-b); color: var(--ok); }
+.choice.right::after { content: "  \2713  Right"; font-weight: 700; font-size: 0.9rem; }
+.choice.wrong { background: var(--bad-bg); border-color: var(--bad-b); color: var(--bad); }
+.choice.wrong::after { content: "  \2717  Not this one"; font-weight: 700; font-size: 0.9rem; }
+.choice.shown { background: var(--warn-bg); border-color: var(--warn-b); color: var(--warn); }
+.choice.shown::after { content: "  The answer"; font-weight: 700; font-size: 0.9rem; }
+.choice[aria-disabled="true"] { cursor: default; }
+
+/* Typed answers */
+.entry-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input[type=text] { font: inherit; font-size: 1.2rem; min-height: 48px; padding: 6px 10px; border: 2px solid var(--border); border-radius: 8px; color: var(--text); background: var(--card); }
+.entry-row input { flex: 1 1 170px; min-width: 0; }
+.answer-label { font-weight: 600; color: var(--heading); }
+table.freq input { width: 4.2em; min-height: 44px; font-size: 1.1rem; padding: 4px 6px; }
+table.freq td.off input { border-color: var(--bad-b); background: var(--bad-bg); }
+table.freq td.ok input { border-color: var(--ok-b); }
+
+/* Tally: one button per row; the marks are drawn in groups of five (four strokes and a slash). */
+.tally { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.tally button { display: flex; align-items: center; gap: 12px; text-align: left; width: 100%; font-weight: 600; }
+.tally .name { min-width: 5.5em; }
+.tally svg { height: 28px; flex: none; max-width: 70%; }
+.tally svg line { stroke: var(--text); stroke-width: 2.5; stroke-linecap: round; }
+.tally svg line.slash { stroke: var(--mark); }
+
+/* A worked example's lines: the work, then why. */
+.steps { list-style: none; padding: 0; margin: 8px 0; }
+.steps li { display: flex; flex-wrap: wrap; gap: 2px 16px; padding: 6px 0; border-top: 1px solid var(--line); }
+.steps .work { flex: 1 1 260px; font-size: 1.1rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.steps .why { flex: 1 1 200px; color: var(--muted); font-size: 0.95rem; }
+
+@media (max-width: 420px) {
+  main { padding: 8px 8px 16px; }
+  h1 { font-size: 1.05rem; }
+  .bar { padding-right: 68px; }
+  .new { min-height: 36px; padding: 4px 10px; }
+  body { font-size: 16px; }
+  table.freq th, table.freq td { padding: 4px 8px; }
+}
+@media (max-width: 520px) { .themes button { min-height: 36px; padding: 2px 8px; font-size: 0.84rem; } }
+
+/* The Data Lab: choose the data and its settings, make it, then work with it. */
+.setup { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 8px 12px; margin: 8px 0; }
+.field { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 6px 0; }
+.field-name { font-weight: 600; color: var(--heading); min-width: 6.5em; margin: 0; }
+select { font: inherit; min-height: 44px; padding: 6px 8px; border: 2px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); flex: 1 1 200px; min-width: 0; max-width: 100%; }
+select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.note { color: var(--muted); font-size: 0.92rem; margin: 4px 0; text-align: center; }
+.note:empty { display: none; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; margin: 10px 0; background: var(--card); }
+summary { font-weight: 600; color: var(--heading); cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.table-box { max-height: 340px; overflow: auto; }
+dl.measures { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 6px 0; }
+dl.measures dt { font-weight: 600; color: var(--heading); }
+dl.measures dd { margin: 0; font-variant-numeric: tabular-nums; }
+.learn { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 8px; }
+button[aria-disabled="true"] { cursor: not-allowed; }
+/* Unavailable Lab buttons: a dashed border (full-strength text, so contrast holds). */
+.row button[aria-disabled="true"] { border-style: dashed; }
+.table-box:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* A fold shows whether it is open: a triangle that turns. */
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "\25B8"; display: inline-block; margin-right: 8px; transition: transform 0.15s; }
+details[open] > summary::before { transform: rotate(90deg); }
+.row button[aria-disabled="true"]:hover { background: var(--card); }
+
+/* Pictures: an icon beside each data set's title, and values drawn as coins, die faces, or a color dot
+   with its name. The value is always in text too (beside the picture, or hidden for a screen reader). */
+.data-what { display: flex; align-items: center; gap: 8px; }
+.lab-icon { display: inline-flex; flex: none; }
+.lab-icon .icon { width: 40px; height: 40px; }
+.chips li.pic { display: inline-flex; align-items: center; gap: 4px; }
+.pic-svg { width: 22px; height: 22px; flex: none; }
+.dot { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--text); display: inline-block; flex: none; }
+.tally .name { display: inline-flex; align-items: center; gap: 6px; }
+.tally .pic-svg { width: 26px; height: 26px; }
+
+/* Making data: the icon moves (a coin flips, a die tumbles, a spinner spins, a bag shakes) and the values pop in.
+   All of it is skipped for anyone whose device asks for less motion. */
+@keyframes flip { from { transform: rotateY(0); } to { transform: rotateY(720deg); } }
+@keyframes tumble { 0% { transform: translateY(-8px) rotate(0); } 60% { transform: translateY(2px) rotate(290deg); } 100% { transform: rotate(360deg); } }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(900deg); } }
+@keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-4px) rotate(-7deg); } 40% { transform: translateX(4px) rotate(7deg); } 60% { transform: translateX(-3px) rotate(-4deg); } 80% { transform: translateX(3px) rotate(4deg); } }
+@keyframes pop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: none; } }
+.anim-flip .icon { animation: flip 0.7s ease-out; }
+.anim-tumble .icon { animation: tumble 0.7s ease-out; }
+.anim-spin .icon { animation: spin 1s cubic-bezier(0.2, 0.7, 0.3, 1); }
+.anim-shake .icon { animation: shake 0.6s ease-in-out; }
+.chips.pop li { animation: pop 0.3s ease-out both; animation-delay: calc(var(--i) * 15ms); }
+@media (prefers-reduced-motion: reduce) {
+  .anim-flip .icon, .anim-tumble .icon, .anim-spin .icon, .anim-shake .icon, .chips.pop li { animation: none; }
+}
+
+/* Bar graphs and pie charts. Bars and slice edges are dragged (or set with the arrow keys); the drawing keeps
+   its own touch handling (see the touch rules below). */
+.chart-box { margin: 8px 0; }
+.chart { display: block; width: 100%; max-width: 460px; margin: 0 auto; overflow: visible; }
+.chart.pie { max-width: 400px; }
+.c-grid { stroke: var(--line); stroke-width: 1; }
+.c-axis { stroke: var(--border); stroke-width: 1.5; }
+.c-tick { font-size: 11px; fill: var(--muted); }
+.c-lab { font-size: 11px; fill: var(--text); }
+.c-bar { stroke: var(--accent); stroke-width: 1.5; }
+.c-handle { fill: var(--primary); }
+.c-val { font-size: 11px; font-weight: 700; fill: var(--text); }
+.c-edit { cursor: ns-resize; }
+/* Touch: a bar graph being drawn lets the page scroll up and down (bars are set by tapping); a pie being drawn takes
+   every touch, so its edges can be dragged around the circle. */
+.chart.c-editing { touch-action: pan-y; }
+.chart.c-dragging { touch-action: none; }
+.c-edit:focus { outline: none; }
+.c-edit:focus-visible .c-handle, .c-edge:focus-visible .c-knob { stroke: var(--title); stroke-width: 3px; }
+.c-edit:focus-visible .c-bar { stroke: var(--title); stroke-width: 3px; }
+.c-rim { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
+.c-slice { stroke: var(--border); stroke-width: 1.5; }
+/* A slice in a real color (red, blue...) is set off by a cream edge, which shows on mid-tones; pale slices keep the dark edge. */
+.c-slice.on-color { stroke: var(--card); stroke-width: 2; }
+/* Yellow is too light for a cream edge: it gets a dark one. And every pie is outlined on top, so no slice fades into the page. */
+.c-slice.on-light { stroke: var(--text); stroke-width: 1.5; }
+.c-outline { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.c-slab { font-size: 12px; font-weight: 700; fill: var(--text); paint-order: stroke; stroke: var(--card); stroke-width: 3px; }
+.c-tickmark { stroke: var(--muted); stroke-width: 1; }
+.c-edge { cursor: grab; }
+.c-edge:focus { outline: none; }
+.c-edgeline { stroke: var(--text); stroke-width: 2; }
+.c-knob { fill: var(--primary); stroke: var(--card); stroke-width: 2; }
+.c-legend { list-style: none; padding: 0; margin: 6px auto; max-width: 320px; font-variant-numeric: tabular-nums; }
+.c-legend li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.c-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--text); flex: none; }
+.scale-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.scale-pick button { min-width: 52px; }
+.scale-pick button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--paper); }
+
+/* A table and the graph drawn from it, side by side where there is room. */
+@media (min-width: 600px) {
+  #pair.side { display: grid; grid-template-columns: minmax(0, 210px) minmax(0, 1fr); gap: 16px; align-items: start; }
+  #pair.side .data { margin-top: 0; }
+  #pair.side .chart-box { margin-top: 0; }
+}
+
+/* Dot plots and stem-and-leaf plots. */
+.c-dot { fill: var(--accent); stroke: var(--card); stroke-width: 1; }
+.c-tap { cursor: pointer; }
+.c-tap:focus { outline: none; }
+.c-tap:focus-visible rect { stroke: var(--title); stroke-width: 2; }
+#erase[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--paper); }
+table.stem { border-collapse: collapse; margin: 4px 0; font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+table.stem caption { text-align: left; font-size: 0.9rem; color: var(--muted); }
+table.stem th { border-right: 2px solid var(--text); padding: 2px 10px; text-align: right; }
+table.stem td { padding: 2px 10px; letter-spacing: 0.15em; }
+.stem-key { font-size: 0.9rem; color: var(--muted); margin: 4px 0; }
+table.stem-in input { width: 11em; max-width: 100%; letter-spacing: 0.1em; }
+
+/* Box plots and line graphs. */
+.c-boxr { fill: var(--accent-bg); stroke: var(--text); stroke-width: 2; }
+.c-med { stroke: var(--title); stroke-width: 3; }
+.c-whisk { stroke: var(--text); stroke-width: 2; }
+.c-outdot { fill: var(--card); stroke: var(--text); stroke-width: 2; }
+.c-hline { stroke: var(--primary); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.c-knobg { cursor: ew-resize; }
+.c-knobg:focus { outline: none; }
+.c-knobg:focus-visible .c-knob { stroke: var(--title); stroke-width: 3px; }
+.c-lline { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.c-lpt { fill: var(--primary); stroke: var(--card); stroke-width: 1.5; }
+.c-break { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }

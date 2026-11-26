@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Coach</title>
+<style>/*STYLE*/</style>
+</head>
+<body>
+<main id="app">
+  <header class="bar">
+    <h1>Data Coach</h1>
+    <button id="menu" class="new" hidden>Menu</button>
+  </header>
+
+  <section id="lab" hidden aria-labelledby="lab-title">
+    <h2 id="lab-title" class="lead" tabindex="-1">Data Lab</h2>
+    <div class="setup">
+      <label class="field" for="lab-sc"><span class="field-name">Data</span><select id="lab-sc"></select></label>
+      <div id="lab-opts"></div>
+      <label class="field" for="lab-n"><span class="field-name" id="lab-n-name">How Many</span><select id="lab-n"></select></label>
+      <p class="row center"><button id="lab-make" class="primary">Make New Data</button></p>
+    </div>
+    <div id="lab-show" hidden>
+      <div id="lab-data"></div>
+      <p class="row center" role="group" aria-label="Work with this data"><button id="lab-quiz" class="primary">Quiz Me</button> <button id="lab-tally">Tally It</button> <button id="lab-build">Build the Table</button></p>
+      <p class="row center" role="group" aria-labelledby="draw-name"><span class="field-name" id="draw-name">Draw a Display</span><button id="lab-bar">Bar Graph</button> <button id="lab-pie">Pie Chart</button> <button id="lab-dot">Dot Plot</button> <button id="lab-hist">Histogram</button> <button id="lab-stem">Stem-and-Leaf</button> <button id="lab-box">Box Plot</button> <button id="lab-line">Line Graph</button></p>
+      <p id="lab-note" class="note" role="status" aria-live="polite"></p>
+      <details id="lab-table-box"><summary>Frequency Table</summary><div id="lab-table"></div></details>
+      <details id="lab-measures-box"><summary>Measures (Guess First)</summary><div id="lab-measures"></div></details>
+    </div>
+    <div class="learn">
+      <p class="field-name" id="learn-title">Learn It</p>
+      <div id="lab-learn" class="themes" role="group" aria-labelledby="learn-title"></div>
+    </div>
+  </section>
+
+  <section id="home" hidden aria-labelledby="home-q">
+    <h2 id="home-q" class="lead" tabindex="-1">What Do You Want to Do?</h2>
+    <button class="big" id="go-lab">Data Lab<small>Make your own data, again and again, and explore it</small></button>
+    <div id="home-levels"></div>
+  </section>
+
+  <section id="lesson" hidden aria-labelledby="lesson-title">
+    <h2 id="lesson-title" class="lead"></h2>
+    <div id="themes" class="themes" role="group" aria-label="Themes in this level"></div>
+    <p id="tag" class="tag-line"></p>
+    <p id="intro" class="intro"></p>
+    <p id="prompt" class="prompt" tabindex="-1"></p>
+    <div id="pair">
+      <div id="data"></div>
+      <div id="work"></div>
+    </div>
+    <ol id="steps" class="steps" hidden></ol>
+    <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+    <p id="controls" class="row center"><button id="check" class="primary">Check</button> <button id="hint">Hint</button> <button id="step">Show Next Step</button> <button id="quick">Quick Draw</button> <button id="back">Back to the Lab</button></p>
+    <p id="next-row" class="row center" hidden><button id="next" class="primary"></button> <button id="next2"></button></p>
+  </section>
+
+  <section id="done" hidden aria-labelledby="done-title">
+    <h2 id="done-title" class="lead" tabindex="-1"></h2>
+    <p id="done-body"></p>
+    <p class="row center"><button id="done-next" class="primary"></button> <button id="done-again">Try the Check Again</button> <button id="done-practice">More Practice</button> <button id="done-menu">Menu</button></p>
+  </section>
+</main>
+<script>/*ENGINE*/</script>
+<script>/*UI*/</script>
+</body>
+</html>
