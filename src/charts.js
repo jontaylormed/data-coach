@@ -207,10 +207,29 @@ const Charts = (() => {
     };
     update();
     if (!o.edit) return;
-    svg.querySelectorAll('.c-knobg').forEach(h => {
+    // Handles at the same value sit on top of each other, and each is held between its neighbors, so the one on top might
+    // not be free to move. The first move decides: leftward takes the lowest of them, rightward the highest.
+    const knobs = [...svg.querySelectorAll('.c-knobg')];
+    knobs.forEach(h => {
       const i = +h.dataset.i, toV = e => lo + (svgPoint(svg, e).x - XL) / (XW - XL - XR) * (hi - lo);
-      h.addEventListener('pointerdown', e => { e.preventDefault(); h.focus(); try { h.setPointerCapture(e.pointerId); } catch (err) { /* no capture to take */ } });
-      h.addEventListener('pointermove', e => { if (h.hasPointerCapture(e.pointerId)) setV(i, toV(e)); });
+      let pick = null;   // the handle this drag moves, once known
+      h.addEventListener('pointerdown', e => {
+        e.preventDefault(); h.focus(); try { h.setPointerCapture(e.pointerId); } catch (err) { /* no capture to take */ }
+        const group = o.values.map((x, j) => j).filter(j => o.values[j] === o.values[i]);
+        pick = group.length === 1 ? i : { group };
+      });
+      h.addEventListener('pointermove', e => {
+        if (!h.hasPointerCapture(e.pointerId) || pick === null) return;
+        const v = toV(e);
+        if (typeof pick === 'object') {
+          if (Math.abs(v - o.values[i]) < snap / 2) return;   // not moved far enough to tell which way
+          pick = v < o.values[i] ? Math.min(...pick.group) : Math.max(...pick.group);
+          if (pick !== i) knobs[pick].focus();
+        }
+        setV(pick, v);
+      });
+      h.addEventListener('pointerup', () => { pick = null; });
+      h.addEventListener('pointercancel', () => { pick = null; });
       h.addEventListener('keydown', e => {
         const d = { ArrowRight: snap, ArrowUp: snap, ArrowLeft: -snap, ArrowDown: -snap, PageUp: step, PageDown: -step }[e.key];
         if (d !== undefined) { e.preventDefault(); setV(i, o.values[i] + d); }
@@ -233,7 +252,7 @@ const Charts = (() => {
     // A long stretch labels about 12 of its points (the questions name only those).
     const every = k > 20 ? Math.ceil(k / 12) : 1;
     const labels = o.labels.map((l, i) => (i % every ? '' : tilt ? `<text transform="translate(${X(i) + 4} ${LT + plotH + 10}) rotate(-45)" text-anchor="end" class="c-lab">${esc(l)}</text>` : `<text x="${X(i)}" y="${LT + plotH + 18}" text-anchor="middle" class="c-lab">${esc(l)}</text>`)).join('');
-    const cols = o.labels.map((l, i) => `<g class="c-col${o.edit ? ' c-edit' : ''}" data-i="${i}"${o.edit ? ` tabindex="0" role="slider" aria-label="${esc(l)}" aria-valuemin="${lo}" aria-valuemax="${hi}"` : ''}><rect x="${X(i) - colW / 2}" y="${LT}" width="${colW}" height="${plotH}" fill="transparent"/><circle r="${k > 20 ? 3 : 5}" class="c-lpt"/></g>`).join('');
+    const cols = o.labels.map((l, i) => `<g class="c-col${o.edit ? ' c-edit' : ''}" data-i="${i}"${o.edit ? ` tabindex="0" role="slider" aria-label="${esc(l)}" aria-valuemin="${lo}" aria-valuemax="${hi}"` : ''}><rect class="c-lhit" x="${X(i) - colW / 2}" y="${LT}" width="${colW}" height="${plotH}" fill="transparent"/><circle r="${k > 20 ? 3 : 5}" class="c-lpt"/></g>`).join('');
     const label = o.edit ? '' : ` role="img" aria-label="Line graph. ${esc(o.labels.map((l, i) => `${l}: ${fmt(o.values[i])}`).join(', '))}."`;
     box.innerHTML = `<svg class="chart${o.edit ? ' c-editing' : ''}" viewBox="0 0 ${LW} ${H}"${label}>${grid}<line x1="${LL}" y1="${LT}" x2="${LL}" y2="${LT + plotH}" class="c-axis"/><line x1="${LL}" y1="${LT + plotH}" x2="${LW - LR}" y2="${LT + plotH}" class="c-axis"/>${brk}<polyline class="c-lline"/>${cols}${labels}</svg>`;
     const svg = box.querySelector('svg');
@@ -267,6 +286,67 @@ const Charts = (() => {
     });
   }
 
+  /* ---------- Normal curve ----------
+     o: { lo, hi (the number line), mu, sd (the curve's center and spread), and either a histogram under it
+     (bins: each bin's start, counts, w, n) or model: true (a curve alone, marked at the mean and 1, 2 and 3 SDs
+     each side), edit, snap, onChange }. Two handles below the number line move the center and the spread (the
+     spread handle sits one SD right of the center). */
+  const CW = 340, CL = 44, CR = 12, CT = 14;
+  function curve(box, o) {
+    const bars = !!o.counts, CB = o.edit ? 92 : bars ? 36 : 46, H = bars ? 250 + (o.edit ? 56 : 0) : 220, plotH = H - CT - CB, plotW = CW - CL - CR, base = CT + plotH;
+    const X = x => CL + plotW * (x - o.lo) / (o.hi - o.lo), snap = o.snap || 1;
+    // Headroom above the tallest bar, so a well-fitted curve's peak isn't cut off.
+    const maxC = bars ? Math.ceil(Math.max(...o.counts) * 1.2) : 0, step = bars ? Displays.goodStep(maxC) : 0, top = bars ? Displays.topFor(step, maxC) : 1;
+    // The curve's height at x: for a histogram, scaled so its area matches the bars' (n values in bins w wide).
+    const height = (x, mu, sd) => (bars ? o.n * o.w : 1) / (sd * Math.sqrt(2 * Math.PI)) * Math.exp(-0.5 * ((x - mu) / sd) ** 2);
+    const yTop = bars ? top : height(o.mu, o.mu, o.sd) * 1.12, Y = c => CT + plotH * (1 - c / yTop);
+    let grid = '', axis = '';
+    if (bars) {
+      for (let c = 0; c <= top; c += step) grid += `<line x1="${CL}" y1="${Y(c)}" x2="${CW - CR}" y2="${Y(c)}" class="c-grid"/><text x="${CL - 6}" y="${Y(c) + 4}" text-anchor="end" class="c-tick">${c}</text>`;
+      const edges = [...o.bins, o.bins[o.bins.length - 1] + o.w], every = Math.ceil(edges.length / 8);
+      axis = edges.map((a, i) => `<line x1="${X(a)}" y1="${base}" x2="${X(a)}" y2="${base + 5}" class="c-axis"/>${i % every ? '' : `<text x="${X(a)}" y="${base + 17}" text-anchor="middle" class="c-lab">${fmt(a)}</text>`}`).join('');
+    } else for (let k = -3; k <= 3; k++) {
+      const x = X(o.mu + k * o.sd);
+      axis += `<line x1="${x}" y1="${CT}" x2="${x}" y2="${base}" class="c-grid"/><line x1="${x}" y1="${base}" x2="${x}" y2="${base + 5}" class="c-axis"/><text x="${x}" y="${base + 17}" text-anchor="middle" class="c-lab">${fmt(+(o.mu + k * o.sd).toFixed(6))}</text><text x="${x}" y="${base + 31}" text-anchor="middle" class="c-tick">${k ? `${k > 0 ? '+' : '−'}${Math.abs(k)} SD` : 'mean'}</text>`;
+    }
+    const rects = bars ? o.bins.map((a, i) => `<rect class="c-bar" x="${X(a)}" y="${Y(o.counts[i])}" width="${X(a + o.w) - X(a)}" height="${base - Y(o.counts[i])}" fill="${SHADES[0]}"/>`).join('') : '';
+    const NAME = ['Center', 'Spread'];
+    const handles = o.edit ? NAME.map((nm, i) => `<g class="c-knobg" data-i="${i}" tabindex="0" role="slider" aria-label="${nm}"><rect y="${CT}" width="30" height="${plotH + 52}" fill="transparent"/><line class="c-hline" y1="${CT}" y2="${base}"/><line class="c-hline" y1="${base + 22}" y2="${base + 26}"/><circle class="c-knob" cy="${base + 34}" r="8"/><text class="c-lab" y="${base + (i ? 74 : 58)}" text-anchor="middle">${nm}</text></g>`).join('') : '';
+    const label = o.edit ? '' : ` role="img" aria-label="${bars ? `Histogram with a normal curve over it, centered at ${fmt(Stats.round(o.mu, 1))} with a spread of ${fmt(Stats.round(o.sd, 1))}. Bars from ${fmt(o.bins[0])}, ${fmt(o.w)} wide: ${o.counts.join(', ')}.` : `Normal curve with mean ${fmt(o.mu)} and standard deviation ${fmt(o.sd)}, marked at ${[-3, -2, -1, 0, 1, 2, 3].map(k => fmt(+(o.mu + k * o.sd).toFixed(6))).join(', ')}.`}"`;
+    const clip = `dc-clip-${Math.random().toString(36).slice(2, 8)}`;
+    box.innerHTML = `<svg class="chart${o.edit ? ' c-dragging' : ''}" viewBox="0 0 ${CW} ${H}"${label}><defs><clipPath id="${clip}"><rect x="${CL}" y="${CT - 2}" width="${plotW}" height="${plotH + 2}"/></clipPath></defs>${grid}${rects}${axis}<line x1="${CL}" y1="${base}" x2="${CW - CR}" y2="${base}" class="c-axis"/>${bars ? `<line x1="${CL}" y1="${CT}" x2="${CL}" y2="${base}" class="c-axis"/><text transform="translate(12 ${CT + plotH / 2}) rotate(-90)" text-anchor="middle" class="c-lab">Count</text>` : ''}<polyline class="c-curve" clip-path="url(#${clip})"/>${handles}</svg>`;
+    const svg = box.querySelector('svg');
+    function update() {
+      const pts = [];
+      for (let j = 0; j <= 120; j++) { const x = o.lo + (o.hi - o.lo) * j / 120; pts.push(`${X(x).toFixed(1)},${Y(height(x, o.mu, o.sd)).toFixed(1)}`); }
+      svg.querySelector('.c-curve').setAttribute('points', pts.join(' '));
+      if (!o.edit) return;
+      svg.querySelectorAll('.c-knobg').forEach(h => {
+        const i = +h.dataset.i, v = i ? o.mu + o.sd : o.mu, x = X(v);
+        h.querySelector('rect').setAttribute('x', x - 15); h.querySelectorAll('line').forEach(l => { l.setAttribute('x1', x); l.setAttribute('x2', x); }); h.querySelector('circle').setAttribute('cx', x); h.querySelector('text').setAttribute('x', x);
+        h.setAttribute('aria-valuemin', i ? snap : o.lo); h.setAttribute('aria-valuemax', i ? (o.hi - o.lo) / 2 : o.hi);
+        h.setAttribute('aria-valuenow', i ? o.sd : o.mu); h.setAttribute('aria-valuetext', i ? `Spread: ${fmt(o.sd)}, one standard deviation, out to ${fmt(+(o.mu + o.sd).toFixed(6))}` : `Center: ${fmt(o.mu)}`);
+      });
+    }
+    // The center moves the whole curve; the spread handle sets how far one SD reaches from the center.
+    const tidy = v => +(Math.round(v / snap) * snap).toFixed(6);
+    const setV = (i, v) => {
+      if (i) { const s = Math.max(snap, Math.min((o.hi - o.lo) / 2, tidy(v))); if (s === o.sd) return; o.sd = s; } else { const m = Math.max(o.lo, Math.min(o.hi, tidy(v))); if (m === o.mu) return; o.mu = m; }
+      update(); if (o.onChange) o.onChange();
+    };
+    update();
+    if (!o.edit) return;
+    svg.querySelectorAll('.c-knobg').forEach(h => {
+      const i = +h.dataset.i, toV = e => { const x = o.lo + (svgPoint(svg, e).x - CL) / plotW * (o.hi - o.lo); return i ? x - o.mu : x; };
+      h.addEventListener('pointerdown', e => { e.preventDefault(); h.focus(); try { h.setPointerCapture(e.pointerId); } catch (err) { /* no capture to take */ } });
+      h.addEventListener('pointermove', e => { if (h.hasPointerCapture(e.pointerId)) setV(i, toV(e)); });
+      h.addEventListener('keydown', e => {
+        const d = { ArrowRight: snap, ArrowUp: snap, ArrowLeft: -snap, ArrowDown: -snap, PageUp: 5 * snap, PageDown: -5 * snap }[e.key];
+        if (d !== undefined) { e.preventDefault(); setV(i, (i ? o.sd : o.mu) + d); }
+      });
+    });
+  }
+
   // A finished display (from the data's chart field), not editable.
   function show(box, ch) {
     if (ch.type === 'pie') pie(box, { cats: ch.cats, values: ch.counts.slice(), n: ch.n, edit: false, legend: 'names' });   // the legend names every slice, even one too small to label
@@ -274,7 +354,8 @@ const Charts = (() => {
     else if (ch.type === 'stem') stem(box, ch);
     else if (ch.type === 'box') boxPlot(box, { axis: ch.axis, values: [ch.five.lo, ch.five.q1, ch.five.med, ch.five.q3, ch.five.hi], out: ch.five.out, edit: false });
     else if (ch.type === 'line') line(box, { labels: ch.labels, values: ch.values.slice(), axis: ch.axis, edit: false });
+    else if (ch.type === 'curve') curve(box, Object.assign({}, ch, { edit: false }));
     else bar(box, { cats: ch.cats, values: ch.counts.slice(), step: ch.step, top: ch.top, edit: false, hist: ch.type === 'hist' });
   }
-  return { bar, pie, dot, stem, boxPlot, line, show };
+  return { bar, pie, dot, stem, boxPlot, line, curve, show };
 })();

@@ -41,6 +41,11 @@ const Stats = (() => {
   const iqr = v => { const q = quartiles(v); return q.q3 - q.q1; };
   // Mean absolute deviation: the mean of each value's distance from the mean.
   const mad = v => { const m = mean(v); return mean(v.map(x => Math.abs(x - m))); };
+  // Standard deviation: the population's σ divides by n; a sample's s divides by n − 1 (Level 8 names which).
+  const variance = (v, sample) => { const m = mean(v); return sum(v.map(x => (x - m) ** 2)) / (v.length - (sample ? 1 : 0)); };
+  const sd = (v, sample) => Math.sqrt(variance(v, sample));
+  // Skewness (the mean cubed distance in σs): near 0 when symmetric, positive with a long tail to the right.
+  const skewness = v => { const m = mean(v), s = sd(v); return s ? mean(v.map(x => ((x - m) / s) ** 3)) : 0; };
   // Outliers by the 1.5 × IQR rule: below Q1 − 1.5 × IQR or above Q3 + 1.5 × IQR.
   function fences(v) { const q = quartiles(v), d = 1.5 * (q.q3 - q.q1); return { lo: q.q1 - d, hi: q.q3 + d }; }
   const outliers = v => { const f = fences(v); return sorted(v).filter(x => x < f.lo - EPS || x > f.hi + EPS); };
@@ -204,5 +209,5 @@ const Stats = (() => {
     return R('wrong', `Not quite. Count each ${cat} once (a tally or the table helps).`);
   }
 
-  return { sum, mean, median, counts, modes, range, quartiles, quartilesWith, iqr, mad, fences, outliers, fiveNumber, freq, expand, sorted, fmt, round, terminates, ends, exact, cut, meanText, read, checkMean, checkMedian, checkMode, checkCount, checkFraction };
+  return { sum, mean, median, counts, modes, range, quartiles, quartilesWith, iqr, mad, variance, sd, skewness, fences, outliers, fiveNumber, freq, expand, sorted, fmt, round, terminates, ends, exact, cut, meanText, read, checkMean, checkMedian, checkMode, checkCount, checkFraction };
 })();

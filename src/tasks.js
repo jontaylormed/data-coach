@@ -329,7 +329,9 @@ const Tasks = (() => {
     const pool = k === 'cat' ? (big ? [() => modeTask(set, true), () => kindTask(set)] : [() => modeTask(set), () => countTask(set, r.pick(cats)), () => kindTask(set)])
       : [() => (big ? fromTableTask(set, 'median') : medianTask(set)), () => (big ? fromTableTask(set, 'mode') : modeTask(set)), () => kindTask(set),
         // A mean by hand: from the list up to 30 values, from the table up to 100 (past that it is calculator work).
-        ...(set.values.length <= 100 ? [() => (big ? fromTableTask(set, 'mean') : meanTask(set))] : [])];
+        ...(set.values.length <= 100 ? [() => (big ? fromTableTask(set, 'mean') : meanTask(set))] : []),
+        // A big set with a clear shape: its histogram's shape (Level 8).
+        ...(typeof Shape !== 'undefined' && set.values.length >= 100 && Shape.shapeOf(set.values) && Displays.fitOf(set, 'hist').fit ? [() => Shape.shapeTask(set)] : [])];
     return r.pick(pool)();
   }
 

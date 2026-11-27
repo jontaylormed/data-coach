@@ -308,6 +308,11 @@ const Stats = (() => {
   const iqr = v => { const q = quartiles(v); return q.q3 - q.q1; };
   // Mean absolute deviation: the mean of each value's distance from the mean.
   const mad = v => { const m = mean(v); return mean(v.map(x => Math.abs(x - m))); };
+  // Standard deviation: the population's σ divides by n; a sample's s divides by n − 1 (Level 8 names which).
+  const variance = (v, sample) => { const m = mean(v); return sum(v.map(x => (x - m) ** 2)) / (v.length - (sample ? 1 : 0)); };
+  const sd = (v, sample) => Math.sqrt(variance(v, sample));
+  // Skewness (the mean cubed distance in σs): near 0 when symmetric, positive with a long tail to the right.
+  const skewness = v => { const m = mean(v), s = sd(v); return s ? mean(v.map(x => ((x - m) / s) ** 3)) : 0; };
   // Outliers by the 1.5 × IQR rule: below Q1 − 1.5 × IQR or above Q3 + 1.5 × IQR.
   function fences(v) { const q = quartiles(v), d = 1.5 * (q.q3 - q.q1); return { lo: q.q1 - d, hi: q.q3 + d }; }
   const outliers = v => { const f = fences(v); return sorted(v).filter(x => x < f.lo - EPS || x > f.hi + EPS); };
@@ -471,7 +476,7 @@ const Stats = (() => {
     return R('wrong', `Not quite. Count each ${cat} once (a tally or the table helps).`);
   }
 
-  return { sum, mean, median, counts, modes, range, quartiles, quartilesWith, iqr, mad, fences, outliers, fiveNumber, freq, expand, sorted, fmt, round, terminates, ends, exact, cut, meanText, read, checkMean, checkMedian, checkMode, checkCount, checkFraction };
+  return { sum, mean, median, counts, modes, range, quartiles, quartilesWith, iqr, mad, variance, sd, skewness, fences, outliers, fiveNumber, freq, expand, sorted, fmt, round, terminates, ends, exact, cut, meanText, read, checkMean, checkMedian, checkMode, checkCount, checkFraction };
 })();
 
 /* Data Coach: questions and levels. Every question is built from a data set, so the same kinds of
@@ -805,7 +810,9 @@ const Tasks = (() => {
     const pool = k === 'cat' ? (big ? [() => modeTask(set, true), () => kindTask(set)] : [() => modeTask(set), () => countTask(set, r.pick(cats)), () => kindTask(set)])
       : [() => (big ? fromTableTask(set, 'median') : medianTask(set)), () => (big ? fromTableTask(set, 'mode') : modeTask(set)), () => kindTask(set),
         // A mean by hand: from the list up to 30 values, from the table up to 100 (past that it is calculator work).
-        ...(set.values.length <= 100 ? [() => (big ? fromTableTask(set, 'mean') : meanTask(set))] : [])];
+        ...(set.values.length <= 100 ? [() => (big ? fromTableTask(set, 'mean') : meanTask(set))] : []),
+        // A big set with a clear shape: its histogram's shape (Level 8).
+        ...(typeof Shape !== 'undefined' && set.values.length >= 100 && Shape.shapeOf(set.values) && Displays.fitOf(set, 'hist').fit ? [() => Shape.shapeTask(set)] : [])];
     return r.pick(pool)();
   }
 
@@ -1175,14 +1182,17 @@ const Spread = (() => {
   const near = (x, y, snap) => Math.abs(x - y) <= snap / 2 + 1e-9;
   // A value read off a graph. A mark between the scale's lines (k > 0) is right within k thirds of a step (k = 2 for a
   // difference of two readings); a mark on a line (k = 0) must be read exactly. Near misses are Close.
-  function readCheck(t, want, step, k = 1, slips = []) {
+  // A difference (a change, an IQR: diff) is never right at 0 or with the wrong sign, and its allowance is at most half of it,
+  // so a small change of 2.2 on a scale of 5s can't be answered 0.
+  function readCheck(t, want, step, k = 1, slips = [], diff = false) {
     const s = checkOne(t, want);
     if (s) return s;
-    const x = Stats.read(t).nums[0];
+    const x = Stats.read(t).nums[0], cap = tol => (diff ? Math.min(tol, Math.abs(want) / 2) : tol);
+    const sideOk = !diff || (x > 0) === (want > 0);
     // A close reading is right before any slip is named: on a graph, a value near the answer can't be told apart from it.
-    if (Math.abs(x - want) <= (k * step) / 3 + 1e-9) return R('right', `Right! It is exactly ${fmt(want)}; a careful reading between the lines is close enough.`);
+    if (sideOk && Math.abs(x - want) <= cap((k * step) / 3) + 1e-9) return R('right', `Right! It is exactly ${fmt(want)}; a careful reading between the lines is close enough.`);
     for (const [y, msg] of slips) if (same(x, y)) return R('wrong', msg);
-    if (Math.abs(x - want) <= (Math.max(1, k) * step) / 2 + 1e-9) return R('almost', `Close: read against the scale more carefully. It is ${fmt(want)}.`);
+    if (sideOk && Math.abs(x - want) <= cap((Math.max(1, k) * step) / 2) + 1e-9) return R('almost', `Close: read against the scale more carefully. It is ${fmt(want)}.`);
     return null;
   }
   const onGrid = (x, lo, step) => Math.abs((x - lo) / step - Math.round((x - lo) / step)) < 1e-9;
@@ -1229,7 +1239,7 @@ const Spread = (() => {
 
   // ---------- Outliers ----------
   function outlierTask(set) {
-    const v = set.values, q = Stats.quartiles(v), f = Stats.fences(v), out = Stats.outliers(v), iq = q.q3 - q.q1;
+    const v = set.values, q = Stats.quartiles(v), f = Stats.fences(v), out = [...new Set(Stats.outliers(v))], iq = q.q3 - q.q1;   // each outlier value once (two 3s are one answer, 3)
     const ans = out.length ? `${T.andList(out.map(fmt))} ${out.length === 1 ? 'is an outlier' : 'are outliers'}.` : 'There are no outliers.';
     return { prompt: 'Which values are outliers by the 1.5 × IQR rule? Type them (like 3 and 95), or type <strong>none</strong>.', ask: 'answer', data: T.dataOf(set), set, want: out.length ? out.join(' and ') : 'none',
       check: t => {
@@ -1269,7 +1279,10 @@ const Spread = (() => {
       check: cur => {
         const off = want.map((x, i) => i).filter(i => !at(cur[i], want[i]));
         if (!off.length) return R('right', `Right! ${fmt(five.lo)}, ${fmt(five.q1)}, ${fmt(five.med)}, ${fmt(five.q3)}, ${fmt(five.hi)}.${want.some(x => !onGrid(x, 0, snap)) ? ` (Each handle is as close as it can go.)` : ''}`);
-        if (five.out.length && (off.includes(0) || off.includes(4)) && (at(cur[0], Math.min(...v)) || at(cur[4], Math.max(...v)))) return R('wrong', 'A whisker reaches an outlier. Each whisker stops at the last value that isn’t an outlier.');
+        // Each side on its own: a whisker reaches an outlier only if that side has one and the whisker is out at it.
+        const lowOut = five.out.some(x => x < five.q1), highOut = five.out.some(x => x > five.q3);
+        const reach = (off.includes(0) && lowOut && at(cur[0], Math.min(...v))) || (off.includes(4) && highOut && at(cur[4], Math.max(...v)));
+        if (reach) return R('wrong', 'A whisker reaches an outlier. Each whisker stops at the last value that isn’t an outlier.');
         if (off.every(i => i === 1 || i === 3) && at(cur[1], w.q1) && at(cur[3], w.q3)) return R('almost', 'Almost: here, when the count is odd, the median is left out of both halves before finding Q1 and Q3.');
         return R('wrong', `Check the ${T.andList(off.map(i => PART[i]))}.`);
       },
@@ -1285,7 +1298,7 @@ const Spread = (() => {
     // "About" when a mark sits between the scale's lines; a reading of a difference may be off by two readings' worth.
     const about = k === 'median' ? !onGrid(five.med, ax.lo, ax.step) : !onGrid(five.q1, ax.lo, ax.step) || !onGrid(five.q3, ax.lo, ax.step);
     return { prompt: `${about ? 'About what' : 'What'} is the ${k === 'median' ? 'median' : 'IQR'}, read from the box plot?`, ask: 'answer', data, set, want: String(want),
-      check: t => readCheck(t, want, ax.step, !about ? 0 : k === 'median' ? 1 : 2, k === 'median' ? [[five.q1, 'That is Q1, the box’s left edge. The median is the line inside the box.'], [five.q3, 'That is Q3, the box’s right edge. The median is the line inside the box.']] : [[five.hi - five.lo, 'That is the length from whisker to whisker. The IQR is just the box: Q3 − Q1.'], [five.q3, 'That is Q3. The IQR is Q3 − Q1: the length of the box.']]) || R('wrong', 'Not quite. Read the box plot’s marks against the number line.'),
+      check: t => readCheck(t, want, ax.step, !about ? 0 : k === 'median' ? 1 : 2, k === 'median' ? [[five.q1, 'That is Q1, the box’s left edge. The median is the line inside the box.'], [five.q3, 'That is Q3, the box’s right edge. The median is the line inside the box.']] : [[five.hi - five.lo, 'That is the length from whisker to whisker. The IQR is just the box: Q3 − Q1.'], [five.q3, 'That is Q3. The IQR is Q3 − Q1: the length of the box.']], k !== 'median') || R('wrong', 'Not quite. Read the box plot’s marks against the number line.'),
       hints: [k === 'median' ? 'The median is the line inside the box.' : 'The IQR is the length of the box: Q3 (its right edge) minus Q1 (its left edge).'], answer: k === 'median' ? `The median is ${fmt(want)}.` : `${fmt(five.q3)} − ${fmt(five.q1)} = ${fmt(want)}.`,
       steps: k === 'median' ? [{ html: `median = ${fmt(want)}`, why: 'Read the line inside the box.' }] : [{ html: `Q1 = ${fmt(five.q1)}, Q3 = ${fmt(five.q3)}`, why: 'Read the box’s two edges.' }, { html: `${fmt(five.q3)} − ${fmt(five.q1)} = ${fmt(want)}`, why: 'The IQR is the box’s length.' }] };
   }
@@ -1294,7 +1307,8 @@ const Spread = (() => {
   const pickSet = (keys, nLo, nHi, ok = () => true) => seed => { const r = rng(seed), key = r.pick(keys); return T.makeWhere(key, r, r.int(nLo, nHi), ok); };
   // A whole-number mean keeps the distances easy; the MAD itself may be rounded to the nearest tenth.
   const madOk = v => Number.isInteger(Stats.mean(v)) && new Set(v).size > 2;
-  const outOk = r => v => (r() < 0.5) === (Stats.outliers(v).length > 0);
+  // Half the outlier questions have outliers and half have none: the coin is flipped once per question, not per candidate set.
+  const outOk = r => { const want = r() < 0.5; return v => want === (Stats.outliers(v).length > 0); };
   const L6 = { n: 6, title: 'Spread', themes: [
     { key: 'range', title: 'Range', make: (seed, ex) => rangeTask(ex ? make('height', 3, 9) : pickSet(NUM6, 6, 12)(seed)),
       intro: 'The range is the greatest value minus the least: how far the values spread.' },
@@ -1302,7 +1316,8 @@ const Spread = (() => {
       intro: 'Q1 and Q3 are the middles of the lower and upper halves. The IQR, Q3 − Q1, is the spread of the middle half.' },
     { key: 'mad', title: 'Mean Absolute Deviation', make: (seed, ex) => madTask(ex ? { key: 'siblings', seed: 0, o: {}, values: [2, 4, 1, 5, 3] } : pickSet(['shoes', 'siblings', 'pets', 'dice', 'points'], 4, 6, madOk)(seed)),
       intro: 'The MAD is the average distance of the values from the mean: a small MAD means the values sit close to the mean.' },
-    { key: 'outliers', title: 'Outliers', make: (seed, ex) => outlierTask(ex ? { key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] } : (() => { const r = rng(seed); return pickSet(['travel', 'reunion', 'screen', 'points', 'scores'], 9, 14, outOk(r))(seed); })()),
+    // Outliers: the coin (with or without) and the scenario are separate draws, so a scenario's name never gives the answer away.
+    { key: 'outliers', title: 'Outliers', make: (seed, ex) => outlierTask(ex ? { key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] } : (() => { const r = rng(seed), ok = outOk(r); return pickSet(['travel', 'reunion', 'screen', 'points', 'scores'], 9, 14, ok)(T.seedOf(r)); })()),
       intro: 'An outlier is far from the rest: below Q1 − 1.5 × IQR or above Q3 + 1.5 × IQR (the fences).' },
     { key: 'box', title: 'Box Plot', make: (seed, ex) => boxTask(ex ? make('scores', 1, 11, { test: 'hard' }) : pickSet(['height', 'points', 'scores', 'travel', 'reunion'], 9, 15)(seed)),
       intro: 'A box plot shows five numbers: the least, Q1, the median, Q3 and the greatest (outliers as dots). The box is the middle half.' },
@@ -1328,20 +1343,29 @@ const Spread = (() => {
   const labeled = (n, i) => n <= 20 || i % Math.ceil(n / 12) === 0;
   function lineTask(set) {
     const v = set.values, axis = lineAxis(v), snap = snapOf(v, axis), labels = labelsOf(set);
-    return { prompt: `Draw a line graph: drag each ${unitWord(set)}’s point (or use the arrow keys) to its value. The points join into a line.`, ask: 'line', data: T.dataOf(set), set, labels, axis, snap,
+    return { prompt: `Draw a line graph: tap or click above each ${unitWord(set)} at its value to place its point, then drag it or use the arrow keys to adjust. The points join into a line.`, ask: 'line', data: T.dataOf(set), set, labels, axis, snap,
       check: cur => {
         if (cur.some(x => x === null)) return R('info', `Place a point for every ${unitWord(set)}.`);
         const off = v.map((x, i) => i).filter(i => !near(cur[i], v[i], snap));
         return off.length ? R('wrong', `Check the ${off.length === 1 ? 'point' : 'points'} for ${T.andList(off.map(i => labels[i]))}.`) : R('right', `Right! Every point is at its value, joined in order.${v.some(x => !onGrid(x, 0, snap)) ? ` (Each point is as close as it can go: to the nearest ${fmt(snap)}.)` : ''}`);
       },
-      hints: [`Go in order: ${labels[0]} first. Find its value in the list, then drag its point to that height on the scale.`] };
+      hints: [`Go in order: ${labels[0]} first. Find its value in the list, then tap or click above ${labels[0]} at that height on the scale.`] };
   }
-  // The overall direction: the slope of the best-fit line, over the whole stretch.
+  /* The overall direction, called only when it is clear, so a fair reading of the line is never marked wrong.
+     Up or down: the best-fit line climbs (or falls) by more than a third of the range, it fits well (R² of 0.5 or more,
+     so an arch or a zigzag doesn't count), and the last third of the stretch sits clearly above (or below) the first
+     third, as the pages teach: compare where the line starts with where it ends up. About the same: both the
+     best-fit change and the change from the first third to the last are small. Anything else is not asked about. */
   function trendOf(v) {
     const n = v.length, xm = (n - 1) / 2, ym = Stats.mean(v);
     const b = v.reduce((s, y, i) => s + (i - xm) * (y - ym), 0) / v.reduce((s, y, i) => s + (i - xm) ** 2, 0);
     const change = b * (n - 1), spread = Math.max(1, Stats.range(v));
-    return { change, kind: change > 0.35 * spread ? 'up' : change < -0.35 * spread ? 'down' : Math.abs(change) < 0.12 * spread ? 'flat' : null };
+    const ssTot = v.reduce((s, y) => s + (y - ym) ** 2, 0), ssRes = v.reduce((s, y, i) => s + (y - ym - b * (i - xm)) ** 2, 0), r2 = ssTot ? 1 - ssRes / ssTot : 0;
+    const third = Math.max(1, Math.floor(n / 3)), ends = Stats.mean(v.slice(n - third)) - Stats.mean(v.slice(0, third));
+    const kind = change > 0.35 * spread && r2 >= 0.5 && ends > 0.35 * spread ? 'up'
+      : change < -0.35 * spread && r2 >= 0.5 && ends < -0.35 * spread ? 'down'
+      : Math.abs(change) < 0.12 * spread && Math.abs(ends) < 0.25 * spread ? 'flat' : null;
+    return { change, r2, ends, kind };
   }
   const TREND = { up: 'Mostly went up', down: 'Mostly went down', flat: 'Stayed about the same' };
   const timeData = set => ({ chart: { type: 'line', labels: labelsOf(set), values: set.values, axis: lineAxis(set.values) }, what: whatOf(set), key: set.key, o: set.o });
@@ -1366,7 +1390,7 @@ const Spread = (() => {
       const [a, b] = r.pick(pairs);
       const d = Math.abs(v[b] - v[a]), up = v[b] > v[a], about = !onGrid(v[a], ax.lo, ax.step) || !onGrid(v[b], ax.lo, ax.step);
       return { prompt: `From ${L[a]} to ${L[b]}, ${about ? 'about ' : ''}how much did the value ${up ? 'go up' : 'go down'}?`, ask: 'answer', data, set, want: String(d),
-        check: t => readCheck(t, d, ax.step, about ? 2 : 0, [[v[b], `That is the value ${on} ${L[b]}. Subtract the two values.`], [v[a], `That is the value ${on} ${L[a]}. Subtract the two values.`], [v[a] + v[b], 'Subtract, don’t add: the change is the difference.']]) || R('wrong', `Not quite. Read both points, then subtract.`),
+        check: t => readCheck(t, d, ax.step, about ? 2 : 0, [[v[b], `That is the value ${on} ${L[b]}. Subtract the two values.`], [v[a], `That is the value ${on} ${L[a]}. Subtract the two values.`], [v[a] + v[b], 'Subtract, don’t add: the change is the difference.']], true) || R('wrong', `Not quite. Read both points, then subtract.`),
         hints: [`Read the points for ${L[a]} and ${L[b]}, then find the difference.`], answer: `${fmt(Math.max(v[a], v[b]))} − ${fmt(Math.min(v[a], v[b]))} = ${fmt(d)}.`,
         steps: [{ html: `${L[a]}: ${fmt(v[a])}`, why: 'Read the first point.' }, { html: `${L[b]}: ${fmt(v[b])}`, why: 'Read the second point.' }, { html: `${fmt(Math.max(v[a], v[b]))} − ${fmt(Math.min(v[a], v[b]))} = ${fmt(d)}`, why: 'The change is the difference.' }] };
     }
@@ -1400,7 +1424,7 @@ const Spread = (() => {
       intro: 'Read a point by going up from its day to the line, then across to the scale. A change is the difference between two points.' },
     { key: 'which', title: 'Which Display?', make: (seed, ex) => whichTimeQ(ex ? WHICH_TIME[0] : rng(seed).pick(WHICH_TIME)),
       intro: 'Change over time: a line graph keeps the order. Counts of categories: a bar graph.' },
-  ], check: seed => { const r = rng(seed), s = () => T.seedOf(r); return [trendTask(trendSet(s())), readLineTask(readSet(s()), s()), readLineTask(readSet(s()), s()), whichTimeQ(r.pick(WHICH_TIME))]; } };
+  ], check: seed => { const r = rng(seed), s = () => T.seedOf(r); return [trendTask(trendSet(s())), readLineTask(readSet(s()), s(), 'value'), readLineTask(readSet(s()), s(), 'change'), whichTimeQ(r.pick(WHICH_TIME))]; } };   // 7.3: one value read, one change
   T.LEVELS.push(L7);
 
   // ---------- The Lab: box plots and line graphs of the student's own data ----------
@@ -1428,10 +1452,397 @@ const Spread = (() => {
     if (type === 'box') return boxTask(set);
     if (set.values.length <= HAND) return lineTask(set);
     const q = trendOf(set.values).kind ? trendTask(set) : readLineTask(set, seed, rng(seed)() < 0.5 ? 'value' : 'change');
-    return { ...q, prompt: `${set.values.length} ${unitWord(set)}s are too many points to drag, so here is the line graph. ${q.prompt}` };
+    return Object.assign({}, q, { prompt: `${set.values.length} ${unitWord(set)}s are too many points to drag, so here is the line graph. ${q.prompt}` });
   }
 
   return { HAND, rangeTask, iqrTask, madTask, outlierTask, boxTask, readBoxTask, axisOf, lineTask, trendTask, readLineTask, trendOf, lineAxis, labelsOf, whichTimeQ, WHICH_TIME, fitOf, misfitTask, labTask, checkOne };
+})();
+
+/* Data Coach: Level 8, Shape and the Normal Curve. The shape of a big data set (symmetric, skewed right or
+   skewed left) and where the mean and median sit; the standard deviation, both kinds, with each question naming
+   which (the population's σ divides by n, a sample's s by n − 1); a histogram of 200 values drawn from a
+   frequency table; a normal curve fitted over a histogram by dragging its center and spread; and the
+   68–95–99.7 rule. */
+const Shape = (() => {
+  'use strict';
+  const { rng, whatOf, kindOf } = Data;
+  const { fmt, mean, median, sd } = Stats;
+  const T = Tasks, D = Displays;
+  const R = (status, msg) => ({ status, msg });
+  const same = (a, b) => Math.abs(a - b) < 1e-9;
+  const r1 = x => Stats.round(x, 1);
+  // One typed number, or null.
+  const one = a => (!a.error && a.nums && a.nums.length === 1 && typeof a.nums[0] === 'number' ? a.nums[0] : null);
+  // A typed number matches y exactly, or y rounded to the places typed (2.4 or 2.45 for 2.449…).
+  const matches = (a, x, y) => same(x, y) || (a.places >= 1 && same(x, Stats.round(y, a.places)));
+
+  // ---------- Shape ----------
+  // The shape, from the skewness: a clear tail one way, clearly none, or (null) not clear enough to ask about.
+  const shapeOf = v => { const g = Stats.skewness(v); return g > 0.6 ? 'right' : g < -0.6 ? 'left' : Math.abs(g) < 0.2 ? 'sym' : null; };
+  const SHAPE = { sym: 'Symmetric', right: 'Skewed right', left: 'Skewed left' };
+  const POOL = {
+    sym: [['height', { grade: '9' }], ['height', { grade: '12' }], ['points', {}], ['run', {}], ['scores', { test: 'hard' }]],
+    right: [['screen', {}], ['travel', {}], ['reaction', {}]],
+    left: [['scores', { test: 'easy' }]],
+  };
+  // 200 values of a given shape. For questions about the mean and median (strict), they are also clearly apart
+  // (skewed) or clearly together (symmetric). Counts of free throws are left out: their few bins look lopsided.
+  function shapeSet(seed, want, strict) {
+    const r = rng(seed), k = want || r.pick(['sym', 'right', 'left']), [key, o] = r.pick(POOL[k]);
+    return T.makeWhere(key, r, 200, v => { const g = (mean(v) - median(v)) / sd(v); return shapeOf(v) === k && (!strict || (k === 'sym' ? Math.abs(g) < 0.05 : k === 'right' ? g > 0.1 : g < -0.1)); }, o);
+  }
+  const histData = set => ({ chart: D.chartFor(set, 'hist'), what: `${whatOf(set)} (${set.values.length} values)`, key: set.key, o: set.o });
+  const WHY = {
+    sym: 'The two sides are about mirror images, with the peak in the middle and no long tail.',
+    right: 'Most values bunch up at the low end, and a long tail stretches out to the right. The tail names the skew.',
+    left: 'Most values bunch up at the high end, and a long tail stretches out to the left. The tail names the skew.',
+  };
+  function shapeTask(set) {
+    const k = shapeOf(set.values);
+    return { prompt: 'What is the shape of this histogram?', ask: 'choice', data: histData(set), set,
+      choices: ['sym', 'right', 'left'].map(j => ({ html: SHAPE[j], right: j === k, msg: j === k ? `Right! ${WHY[k]}` : 'Not this one. Find the peak, then look for a long, thin tail of bars. The side the tail stretches toward names the skew; no tail on either side is symmetric.' })),
+      hints: ['Where is the peak? Is there a long, thin tail of short bars on one side?'], answer: `${SHAPE[k]}. ${WHY[k]}` };
+  }
+  // The mean is pulled toward the tail; the median (the middle value) hardly moves.
+  const PULL = {
+    sym: 'With no tail, the balance point and the middle value are in about the same place.',
+    right: 'The few large values in the long tail pull the mean up toward them. The median is just the middle value, so it hardly moves: the mean is greater.',
+    left: 'The few small values in the long tail pull the mean down toward them. The median is just the middle value, so it hardly moves: the median is greater.',
+  };
+  function centerTask(set, seed) {
+    const k = shapeOf(set.values), v = set.values;
+    if (rng(seed)() < 0.5) {
+      const right = { sym: 'They are about the same', right: 'The mean', left: 'The median' }[k];
+      return { prompt: 'For this data, which is greater: the mean or the median?', ask: 'choice', data: histData(set), set,
+        choices: ['The mean', 'The median', 'They are about the same'].map(h => ({ html: h, right: h === right, msg: h === right ? `Right! ${PULL[k]}` : 'Not this one. Look at the shape first. A long tail pulls the mean toward it; the median is just the middle value.' })),
+        hints: ['What is the shape? Which way would a long tail pull the mean?'], answer: PULL[k] };
+    }
+    const m = r1(mean(v)), md = r1(median(v));
+    return { prompt: `For the ${whatOf(set)} (${v.length} values), the mean is ${fmt(m)} and the median is ${fmt(md)}. What shape is the histogram most likely to have?`, ask: 'choice', set,
+      choices: ['sym', 'right', 'left'].map(j => ({ html: SHAPE[j], right: j === k, msg: j === k ? `Right! ${k === 'sym' ? 'The mean and the median are about the same, so nothing pulls the mean away: about symmetric.' : `The mean is ${k === 'right' ? 'greater' : 'less'} than the median, so a long tail of ${k === 'right' ? 'large' : 'small'} values is pulling it ${k === 'right' ? 'up' : 'down'}: skewed ${k}.`}` : 'Not this one. A long tail pulls the mean toward it, away from the median. Which way has the mean moved?' })),
+      hints: ['Is the mean bigger than the median, smaller, or about the same? A tail pulls the mean toward it.'], answer: `${SHAPE[k]}. ${PULL[k]}` };
+  }
+
+  // ---------- Standard deviation ----------
+  function sdTask(set, sample) {
+    const v = set.values, n = v.length, m = mean(v), d = v.map(x => x - m), sq = d.map(x => x * x), ss = Stats.sum(sq);
+    const div = sample ? n - 1 : n, want = Math.sqrt(ss / div), other = Math.sqrt(ss / (sample ? n : n - 1)), name = sample ? 's' : 'σ';
+    const eq = same(want, r1(want)) ? '=' : '≈';   // σ = 2 when the root comes out even
+    const slips = [
+      [ss / div, `That is the variance, ${fmt(ss)} ÷ ${div}. The standard deviation is its square root.`],
+      [other, sample ? `That divides by n = ${n}: that is σ, for a whole population. These values are a sample, so divide by n − 1 = ${n - 1}.` : `That divides by n − 1 = ${n - 1}: that is s, for a sample. These are all the values, so divide by n = ${n}.`],
+      [ss / (sample ? n : n - 1), `That is a variance, and it divides by ${sample ? 'n' : 'n − 1'}. Divide by ${div}, then take the square root.`],
+      [Stats.mad(v), 'That is the MAD (the mean of the plain distances). The standard deviation squares each distance first, then takes a square root at the end.'],
+      [ss, `That is the total of the squared distances. Divide it by ${div}, then take the square root.`],
+      [Math.sqrt(ss), `Divide by ${div} before taking the square root.`],
+      [m, 'That is the mean. The standard deviation measures how far the values spread from it.'],
+    ];
+    return { prompt: `${sample ? 'These values are a <strong>sample</strong> from a bigger group. Find the sample standard deviation, <em>s</em> (divide by n − 1).' : 'These are <strong>all</strong> the values (the whole population). Find the population standard deviation, σ (divide by n).'} Round to the nearest tenth.`,
+      ask: 'answer', data: T.dataOf(set), set, want: same(want, r1(want)) ? fmt(want) : r1(want).toFixed(1),
+      check: t => {
+        const a = Stats.read(t), x = one(a);
+        if (x === null) return a.empty ? R('info', 'Type an answer first.') : R('info', 'Type one number.');
+        if (matches(a, x, want)) return R('right', `Right! ${name} = √(${fmt(ss)} ÷ ${div}) ${eq} ${fmt(r1(want))}.`);
+        for (const [y, msg] of slips) if (matches(a, x, y)) return R('wrong', msg);
+        return R('wrong', 'Not quite. Find the mean, each value’s distance from it, square each distance, add the squares, divide, then take the square root.');
+      },
+      hints: [`First find the mean: ${fmt(Stats.sum(v))} ÷ ${n}.`, `Square each value’s distance from the mean, add the squares, divide by ${div}${sample ? ' (n − 1)' : ' (n)'}, then take the square root.`],
+      answer: `${name} = √(${fmt(ss)} ÷ ${div}) ${eq} ${fmt(r1(want))}.`,
+      steps: [{ html: `mean = ${fmt(Stats.sum(v))} ÷ ${n} = ${fmt(m)}`, why: 'Find the mean.' }, { html: `distances: ${d.map(fmt).join(', ')}`, why: 'Each value minus the mean (some are negative).' },
+        { html: `squared: ${sq.map(fmt).join(', ')}`, why: 'Square each distance, so every one is positive.' }, { html: `${sq.map(fmt).join(' + ')} = ${fmt(ss)}`, why: 'Add the squares.' },
+        { html: `${fmt(ss)} ÷ ${div} = ${Stats.meanText(ss / div)}`, why: sample ? `Divide by n − 1 = ${div}, for a sample (the variance).` : `Divide by n = ${div}, for a population (the variance).` },
+        { html: `${name} = √${Stats.meanText(ss / div).replace('about ', '')} ${eq} ${fmt(r1(want))}`, why: 'Take the square root: back to the data’s own units.' }] };
+  }
+  // Whole-number means keep the distances easy.
+  const sdOk = v => Number.isInteger(mean(v)) && new Set(v).size > 2;
+  const sdSet = seed => { const r = rng(seed); return T.makeWhere(r.pick(['shoes', 'siblings', 'pets', 'dice', 'freethrows']), r, r.int(4, 6), sdOk); };
+
+  // ---------- A histogram of 200 values, from its frequency table ----------
+  function tableHistTask(set) {
+    const v = set.values, w = D.goodWidth(v), { bins, counts } = D.binsOf(v, w), cats = bins.map(b => b.label), max = Math.max(...counts);
+    return { prompt: `The ${v.length} values are grouped into bins ${fmt(w)} wide. Draw the histogram: choose the scale, then drag each bar (or use the arrow keys) up to its count.`,
+      ask: 'bar', hist: true, data: { table: { cats, cnts: counts, head: 'Range' }, what: `${whatOf(set)} (${v.length} values)`, key: set.key, o: set.o }, set, cats, counts, max,
+      steps: D.stepsFor(max), good: D.goodStep(max), scale: s => D.scaleVerdict(s, max), top: s => D.topFor(s, max), check: (h, s) => D.checkBar(h, s, cats, counts),
+      hints: ['Choose a step that makes about 4 to 10 lines up to the biggest count.', 'The bars touch: each one is a range of numbers. Read each count from the table.'] };
+  }
+
+  // ---------- Fit a normal curve ----------
+  // The curve's handles move in small, tidy steps: about 1/60 of the axis, never finer than the data's own step.
+  const NICE = [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 20];
+  function curveChart(set) {
+    // A width the histogram rule likes; data with too few different values (a misfit) still gets some bins.
+    const v = set.values, w = D.goodWidth(v) || D.widthsFor(v)[0] || Math.max(1, D.grainOf(v)), { bins, counts } = D.binsOf(v, w), lo = bins[0].a, hi = bins[bins.length - 1].a + w;
+    return { type: 'curve', bins: bins.map(b => b.a), labels: bins.map(b => b.label), counts, w, n: v.length, lo, hi };
+  }
+  function curveTask(set) {
+    const v = set.values, ch = curveChart(set), mu = mean(v), sig = sd(v), snap = NICE.find(s => s >= (ch.hi - ch.lo) / 60) || 20;
+    const start = { mu: +(Math.round((ch.lo + (ch.hi - ch.lo) * 0.22) / snap) * snap).toFixed(6), sd: Math.max(snap, +(Math.round(((ch.hi - ch.lo) * 0.28) / snap) * snap).toFixed(6)) };   // off to the left and too wide
+    return { prompt: 'Fit a normal curve to the histogram: drag the <strong>center</strong> handle to where the curve should peak, and the <strong>spread</strong> handle to one standard deviation from the center (or use the arrow keys).',
+      ask: 'curve', data: { what: `${whatOf(set)} (${v.length} values)`, key: set.key, o: set.o }, set, chart: ch, snap, start, mu, sig,
+      check: c => {
+        // By eye: the center within about a third of an SD of the mean, the spread within a quarter of σ.
+        const okC = Math.abs(c.mu - mu) <= 0.35 * sig, okS = Math.abs(c.sd / sig - 1) <= 0.25;
+        if (okC && okS) return R('right', `Right! Your curve is centered at ${fmt(r1(c.mu))} with a spread of ${fmt(r1(c.sd))}. The data’s mean is ${fmt(r1(mu))} and its σ is ${fmt(r1(sig))}: about 68% of the values are within one σ of the mean.`);
+        const say = [];
+        if (!okC) say.push(`Move the center to the ${c.mu < mu ? 'right' : 'left'}: a normal curve peaks at the mean, the histogram’s balance point.`);
+        if (!okS) say.push(`Make the curve ${c.sd < sig ? 'wider' : 'narrower'}: about two thirds of the values (68%) should be within one spread of the center.`);
+        return R(okC || okS ? 'almost' : 'wrong', say.join(' '));
+      },
+      hints: ['The curve is symmetric, so put its center where the histogram balances: the middle of the tallest bars.', 'One standard deviation each side of the center should hold about two thirds of the bars’ area.'] };
+  }
+  const curveSet = seed => shapeSet(seed, 'sym');
+
+  // ---------- The 68–95–99.7 rule ----------
+  const MODELS = [
+    { key: 'height', o: { grade: '9' }, mu: 65, sd: 3, what: 'heights of 200 pretend 9th graders', unit: 'inches', one: 'inch' },
+    { key: 'run', o: {}, mu: 15, sd: 1.5, what: '100 m run times of 200 pretend students', unit: 'seconds', one: 'second' },
+    { key: 'points', o: {}, mu: 62, sd: 8, what: 'points a pretend team scored in 200 games', unit: 'points', one: 'point' },
+    { key: 'scores', o: { test: 'hard' }, mu: 70, sd: 10, what: 'scores of 200 pretend students on a hard test', unit: 'points', one: 'point' },
+    { key: 'sleep', o: { who: 'hs' }, mu: 7, sd: 1, what: 'hours of sleep of 200 pretend high schoolers', unit: 'hours', one: 'hour' },
+  ];
+  // [type, from, to (in SDs from the mean), percent]
+  const RULE = [['between', -1, 1, 68], ['between', -2, 2, 95], ['between', -3, 3, 99.7], ['above', 1, null, 16], ['below', -1, null, 16], ['above', 2, null, 2.5], ['below', -2, null, 2.5],
+    ['between', 0, 1, 34], ['between', -2, 0, 47.5], ['between', -1, 2, 81.5], ['between', 1, 2, 13.5]];
+  const ruleData = m => ({ chart: { type: 'curve', model: true, mu: m.mu, sd: m.sd, lo: m.mu - 4 * m.sd, hi: m.mu + 4 * m.sd }, what: `${m.what}, in ${m.unit}`, key: m.key, o: m.o });
+  function ruleTask(m, item, count) {
+    const [type, a, b, p] = item, at = k => fmt(+(m.mu + k * m.sd).toFixed(6)), N = 200, want = count ? (p * N) / 100 : p;
+    const where = type === 'between' ? `between ${at(a)} and ${at(b)}` : `${type} ${at(a)}`;
+    const prompt = `The ${m.what} follow a normal curve with a mean of ${fmt(m.mu)} ${m.unit} and a standard deviation of ${fmt(m.sd)} ${m.sd === 1 ? m.one : m.unit}. ${count ? `About how many of the ${N}` : 'About what percent of them'} are ${where}?`;
+    const half = type === 'between' ? (a === 0 || b === 0) : true;
+    const slips = [];
+    if (type !== 'between') { const inside = { 1: 68, 2: 95 }[Math.abs(a)]; slips.push([100 - inside, `${fmt(100 - inside)}% is outside on both sides together. ${type === 'above' ? 'Above' : 'Below'} is just one side: half of it.`], [inside, `${inside}% is within ${Math.abs(a)} SD on both sides of the mean. This asks about the part ${type} ${at(a)}.`], [100 - (100 - inside) / 2, `That is the part on the other side. The curve’s tail ${type} ${at(a)} is the small part.`]); }
+    if (half && type === 'between') { const k = Math.abs(a || b), whole = { 1: 68, 2: 95, 3: 99.7 }[k]; slips.push([whole, `${whole}% is within ${k} SD on both sides. From the mean to one side is half of that.`]); }
+    const scaled = count ? slips.map(([y, msg]) => [(y * N) / 100, msg]) : slips;
+    if (count) scaled.push([p, `That is the percent, ${p}%. Find ${p}% of ${N}.`]);
+    const tol = count ? 1 : 0.5;
+    return { prompt, ask: 'answer', data: ruleData(m), want: fmt(want),
+      check: t => {
+        const r = Stats.read(t), x = one(r);
+        if (x === null) return r.empty ? R('info', 'Type an answer first.') : R('info', 'Type one number.');
+        if (Math.abs(x - want) <= tol + 1e-9) return R('right', `Right! ${count ? `${p}% of ${N} is ${fmt(want)}.` : `About ${p}%.`}`);
+        for (const [y, msg] of scaled) if (Math.abs(x - y) <= tol + 1e-9) return R('wrong', msg);
+        return R('wrong', 'Not quite. Mark the mean and 1, 2 and 3 SDs on each side. Within 1 SD is 68%, within 2 is 95%, within 3 is 99.7%, and each side holds half.');
+      },
+      hints: [`Mark the mean, ${fmt(m.mu)}, and count SDs out from it: ${at(-2)}, ${at(-1)}, ${at(1)}, ${at(2)}.`, 'Within 1 SD is 68%, within 2 SDs is 95%, within 3 SDs is 99.7%. The curve is symmetric, so each side of the mean holds half.'],
+      answer: `${count ? `${p}% of ${N} = ${fmt(want)}` : `About ${p}%`}.`,
+      steps: [{ html: `${where}: ${type === 'between' ? `from ${a} to ${b} SDs` : `${type} ${a} SD${Math.abs(a) > 1 ? 's' : ''}`} from the mean`, why: 'Count how many SDs from the mean each number is.' },
+        { html: `${fmt(p)}%`, why: type === 'between' && !half && a === -b ? `Within ${b} SD${b > 1 ? 's' : ''} on both sides: ${p}%.` : type === 'between' && half ? `Half of ${fmt({ 1: 68, 2: 95, 3: 99.7 }[Math.abs(a || b)])}%: one side only.` : type === 'between' ? 'Add the two sides: half of 68% on one side and half of 95% on the other, or the difference of two halves.' : `Outside ${Math.abs(a)} SD${Math.abs(a) > 1 ? 's' : ''} is ${fmt(100 - { 1: 68, 2: 95 }[Math.abs(a)])}%; one tail is half of it.` },
+        ...(count ? [{ html: `${p}% of ${N} = ${fmt(want)}`, why: 'Find that percent of the whole group.' }] : [])] };
+  }
+  const ruleQ = seed => { const r = rng(seed); return ruleTask(r.pick(MODELS), r.pick(RULE), r() < 0.35); };
+
+  // ---------- Level 8 ----------
+  const L8 = { n: 8, title: 'Shape and the Normal Curve', themes: [
+    { key: 'shape', title: 'Shape', make: (seed, ex) => (ex ? shapeTask(shapeSet(3, 'right')) : rng(seed)() < 0.5 ? shapeTask(shapeSet(seed)) : centerTask(shapeSet(seed, null, true), seed)),
+      intro: 'A histogram is symmetric when its sides mirror each other. A long tail on one side makes it skewed toward that side, and the tail pulls the mean toward it.' },
+    { key: 'sd', title: 'Standard Deviation', make: (seed, ex) => (ex ? sdTask({ key: 'freethrows', seed: 0, o: { skill: '50' }, values: [2, 4, 4, 4, 5, 5, 7, 9] }, false) : sdTask(sdSet(seed), rng(seed)() < 0.5)),
+      intro: 'The standard deviation measures how far the values typically are from the mean. Square each distance, find their mean (divide by n, or by n − 1 for a sample), then take the square root.' },
+    { key: 'table', title: 'Histogram From a Table', make: (seed, ex) => tableHistTask(ex ? shapeSet(5, 'sym') : shapeSet(seed)),
+      intro: 'With 200 values, count them into bins first: the frequency table does that. Then each bar shows a bin’s count.' },
+    { key: 'curve', title: 'Fit the Curve', make: (seed, ex) => curveTask(curveSet(ex ? 7 : seed)),
+      intro: 'A normal curve is a smooth, symmetric bell. It peaks at the mean, and one standard deviation on each side holds about 68% of the values.' },
+    { key: 'rule', title: '68–95–99.7', make: (seed, ex) => (ex ? ruleTask(MODELS[0], RULE[3], false) : ruleQ(seed)),
+      intro: 'In a normal curve, about 68% of the values are within 1 standard deviation of the mean, 95% within 2, and 99.7% within 3.' },
+  ], check: seed => { const r = rng(seed), s = () => T.seedOf(r); return [shapeTask(shapeSet(s())), centerTask(shapeSet(s(), null, true), s()), sdTask(sdSet(s()), r() < 0.5), ruleQ(s())]; } };
+  T.LEVELS.push(L8);
+
+  // ---------- The Lab: a normal curve over the student's own data ----------
+  // The shape each scenario is made with (data.js): a bell for these, a long right tail for those.
+  const KNOWN = { height: 'sym', points: 'sym', run: 'sym', shoes: 'sym', sleep: 'sym', screen: 'right', travel: 'right', reaction: 'right' };
+  const knownShape = set => (set.key === 'scores' ? ((set.o && set.o.test) === 'easy' ? 'left' : 'sym') : KNOWN[set.key]);
+  function fitOf(set) {
+    const k = kindOf(set), no = (short, why) => ({ fit: false, short, why });
+    if (k === 'cat') return no('Categories have no number line.', 'A normal curve sits over a number line. Categories have no numbers and no order: a bar graph fits.');
+    if (k === 'time') return no('It loses the order over time.', 'A curve over all the values mixes the days together and drops their order: a line graph fits.');
+    const v = set.values;
+    if (v.length < 50) return no('Too few values to see a shape.', `With only ${v.length} values the histogram is too bumpy to match a smooth curve. Make 50 or more values.`);
+    // Skewed only when it clearly is (the lesson's own test, beyond 0.6), and never for data the tool makes from a
+    // symmetric bell: a sample of 50 heights can lean by chance, and calling it skewed would mark "it fits" wrong.
+    const s = knownShape(set) === 'sym' ? null : shapeOf(v);
+    if (s === 'right' || s === 'left') return no(`The data is skewed ${s}, but a normal curve is symmetric.`, `A normal curve is symmetric. This histogram has a long tail to the ${s}, so the curve misses the peak on one side and the tail on the other.`);
+    return { fit: true };
+  }
+  function misfitTask(set) {
+    const f = fitOf(set), k = kindOf(set), pic = k === 'num';
+    const chart = pic ? Object.assign(curveChart(set), { mu: mean(set.values), sd: sd(set.values) }) : null;
+    return { prompt: pic ? `Here is a normal curve over a histogram of the ${whatOf(set)}. What’s wrong with it?` : `Someone wants to fit a normal curve to the ${whatOf(set)}. What’s wrong with that?`, ask: 'choice', shuffle: true,
+      data: pic ? { chart, what: whatOf(set), key: set.key, o: set.o } : T.dataOf(set), set,
+      choices: [{ html: f.short, right: true, msg: `Right! ${f.why}` }, { html: 'Nothing: it fits this data.', right: false, msg: 'Not this one. Look at the shape of the data, and at what a normal curve needs.' },
+        { html: 'The curve should be taller.', right: false, msg: 'Not this one. A taller curve would not fix it: the problem is whether this data has a normal shape at all.' }, { html: 'It needs a title and labels.', right: false, msg: 'Not this one. Labels help, but the problem is the kind of data for this curve.' }],
+      answer: f.why };
+  }
+  const labTask = set => (fitOf(set).fit ? curveTask(set) : misfitTask(set));
+
+  return { shapeOf, shapeSet, shapeTask, centerTask, sdTask, sdSet, tableHistTask, curveTask, curveChart, ruleTask, ruleQ, RULE, MODELS, fitOf, misfitTask, labTask };
+})();
+
+/* Data Coach: Common Mistakes. For each level, the mistakes students make most often. Each one makes a new
+   question every time, with that mistake among the choices; a wrong choice names its mistake. Every question has
+   exactly one right choice, and no two choices are the same (checked on the tests page). */
+const Mistakes = (() => {
+  'use strict';
+  const { rng, make, whatOf, catsOf } = Data;
+  const { fmt, mean, median, sorted } = Stats;
+  const T = Tasks;
+  const r1 = x => Stats.round(x, 1);
+  const named = (name, why) => `<strong>${name}.</strong> ${why}`;
+  // A choice question: the right choice, then the wrong ones as [html, message, almost?]. Duplicates are dropped
+  // (a wrong choice that equals the right one would be a right answer marked wrong).
+  function q(prompt, data, right, why, wrongs, set) {
+    const seen = new Set([right]), choices = [{ html: right, right: true, msg: `Right! ${why}` }];
+    for (const [html, msg, almost] of wrongs) if (!seen.has(html)) { seen.add(html); choices.push({ html, right: false, msg, almost: !!almost }); }
+    return { prompt, ask: 'choice', shuffle: true, data, set, choices, answer: why };
+  }
+  const tableText = (cats, cnts) => cats.map((c, i) => `${fmt(c)}: ${cnts[i]}`).join(' · ');
+
+  // ---------- Level 1: Kinds of Data ----------
+  function namesAsNumbers(seed) {
+    const [what, sample] = rng(seed).pick(T.KINDS.filter(k => k[3]));
+    return q(`${what}: ${sample} What kind of data is this?`, null, 'Categories', 'These numbers are names (labels), not amounts. Adding or averaging them means nothing, so they are categories.',
+      [['Numbers', named('Numbers used as names', 'A number on a jersey or an envelope is a label. You can’t add or average labels: the mean jersey number tells you nothing.')],
+        ['Numbers over time', named('Numbers used as names', 'These were not measured over time, and they are not amounts at all: they are labels.')]]);
+  }
+  function oneAnswer(seed) {
+    const r = rng(seed), no = T.STAT_Q.filter(s => !s[1]), yes = T.STAT_Q.filter(s => s[1]), [qn] = r.pick(no), [qy] = r.pick(yes);
+    return q(`Which one is a statistical question?`, null, qy, 'Its answers vary from person to person (or day to day), so it takes data to answer it.',
+      [[qn, named('A question with one answer', 'It has a single answer, so nothing varies and there is no data to collect. A statistical question expects answers that vary.')]]);
+  }
+  // ---------- Level 2: Organize It ----------
+  function zeroRow(seed) {
+    const r = rng(seed), set = T.makeWhere('dice', r, r.int(8, 10), v => [1, 2, 3, 4, 5, 6].filter(f => !v.includes(f)).length === 1, { dice: '1' });
+    const cats = catsOf(set), cnts = Stats.freq(set.values, cats), z = cats[cnts.indexOf(0)], keep = cats.map((c, i) => i).filter(i => cnts[i] > 0);
+    const j = keep.find(i => cnts[i] > 1), off = cnts.slice(); off[j]--; off[keep.find(i => i !== j)]++;
+    return q('Which frequency table matches the rolls?', T.dataOf(set), tableText(cats, cnts), `Every face from 1 to 6 gets a row, even ${z}, which was rolled 0 times. The counts add up to ${set.values.length}.`,
+      [[tableText(keep.map(i => cats[i]), keep.map(i => cnts[i])), named('Leaving out a count of 0', `This table skips ${z}. It was rolled 0 times, but it could have come up, so it still gets a row with a count of 0.`)],
+        [tableText(cats, off), named('A miscount', `The counts for ${cats[j]} and ${cats[keep.find(i => i !== j)]} are off by one. Tally one roll at a time, in order.`)]], set);
+  }
+  function twice(seed) {
+    const r = rng(seed), set = T.makeWhere('coins', r, r.int(10, 14), v => v.includes('Heads') && v.includes('Tails')), cats = catsOf(set), cnts = Stats.freq(set.values, cats), n = set.values.length;
+    const up = cnts.slice(); up[0]++;
+    return q('Which frequency table matches the flips?', T.dataOf(set), `${tableText(cats, cnts)} · Total: ${n}`, `The counts add up to ${n}, the number of flips.`,
+      [[`${tableText(cats, up)} · Total: ${n + 1}`, named('Counting one value twice', `Its counts add up to ${n + 1}, but there are only ${n} flips. Check that the total matches how many values there are.`)],
+        [`${tableText(cats, cnts)} · Total: ${cats.length}`, named('The wrong total', `The total is how many values there are (${n}), not how many rows.`)]], set);
+  }
+  // ---------- Level 3: Center ----------
+  function unsortedFrom(set) {
+    const v = set.values, n = v.length, md = median(v);
+    return q('Find the median.', T.dataOf(set), fmt(md), `In order, ${sorted(v).map(fmt).join(', ')}: the middle value is ${fmt(md)}.`,
+      [[fmt(v[(n - 1) / 2]), named('Not putting the values in order', `${fmt(v[(n - 1) / 2])} is the middle of the list as it was collected. Put the values in order first.`)],
+        [fmt(r1(mean(v))), named('The mean instead of the median', 'That is the mean. The median is the middle value, once the values are in order.')]], set);
+  }
+  function totalAsMean(seed) {
+    const r = rng(seed), set = T.makeWhere(r.pick(['dice', 'siblings', 'pets']), r, r.int(5, 7), v => Number.isInteger(mean(v)) && new Set(v).size > 2), v = set.values, s = Stats.sum(v), m = mean(v);
+    return q('Find the mean.', T.dataOf(set), fmt(m), `Add the values (${fmt(s)}), then divide by how many there are: ${fmt(s)} ÷ ${v.length} = ${fmt(m)}.`,
+      [[fmt(s), named('The total as the mean', `${fmt(s)} is the total. Share it equally: divide by the number of values, ${v.length}.`)],
+        [fmt(r1(s / (v.length + 1))), named('Dividing by the wrong count', `There are ${v.length} values. Count them again before dividing.`)]], set);
+  }
+  function countAsMode(seed) {
+    const r = rng(seed), set = T.makeWhere(r.pick(['siblings', 'pets', 'shoes']), r, r.int(14, 20), v => Stats.modes(v).length === 1 && !Stats.counts(v).some(p => p[0] === Math.max(...Stats.counts(v).map(c => c[1])))), cats = catsOf(set), cnts = Stats.freq(set.values, cats);
+    const [md] = Stats.modes(set.values), top = Math.max(...cnts);
+    return q('Find the mode.', T.tableOf(set, cats), fmt(md), `${fmt(md)} has the biggest count, ${top}, so it is the most common value.`,
+      [[fmt(top), named('The count as the mode', `${top} is how many times the mode happened. The mode is the value itself: ${fmt(md)}.`)],
+        [fmt(cats[cnts.indexOf(Math.min(...cnts.filter(c => c > 0)))]), named('The least common value', 'The mode is the value with the biggest count.')]], set);
+  }
+  // ---------- Level 4: Showing Categories ----------
+  function linesFrom(set, r) {
+    const cats = catsOf(set), cnts = Stats.freq(set.values, cats), ch = Object.assign(Displays.chartOf(set, 'bar', 2), {});
+    const i = cats.map((c, j) => j).filter(j => cnts[j] >= 4 && cnts[j] % 2 === 0)[0];
+    if (i === undefined) return null;
+    const c = cats[i], k = cnts[i];
+    return q(`How many are <strong>${fmt(c)}</strong>? (The scale counts by 2s.)`, { chart: ch, what: whatOf(set), key: set.key, o: set.o }, String(k), `The ${fmt(c)} bar reaches the line labeled ${k}.`,
+      [[String(k / 2), named('Counting lines, not reading the scale', `The bar’s top is ${k / 2} lines up, but each line is worth 2. Read the number on the scale: ${k}.`)],
+        [String(k + 1), named('Reading past the bar', 'Read straight across from the top of the bar to the scale.')]], set);
+  }
+  function linesQ(seed) {
+    const r = rng(seed);
+    for (let t = 0; t < 50; t++) { const key = r.pick(['eyes', 'subject', 'marbles']); const s = make(key, T.seedOf(r), r.int(20, 30)); const x = linesFrom(s, r); if (x) return x; }
+    throw new Error('no bar to read');
+  }
+  function partToPart(seed) {
+    const r = rng(seed), set = make(r.pick(['eyes', 'subject', 'marbles']), T.seedOf(r), r.int(12, 20)), cats = catsOf(set), cnts = Stats.freq(set.values, cats), n = set.values.length;
+    const i = cnts.findIndex(c => c > 0 && c < n), c = cats[i], k = cnts[i];
+    return q(`What fraction of the whole is <strong>${fmt(c)}</strong>?`, T.tableOf(set, cats), `${k}/${n}`, `${k} of the ${n} values are ${fmt(c)}: ${k}/${n} of the whole (its share of a pie chart).`,
+      [[`${k}/${n - k}`, named('Part to part, not part to whole', `${k}/${n - k} compares ${fmt(c)} with the rest. The whole is all ${n} values, so the fraction is out of ${n}.`)],
+        [`${n - k}/${n}`, named('The rest, not the part', `${n - k}/${n} is everything that is not ${fmt(c)}.`)]], set);
+  }
+  // ---------- Level 5: Showing Numbers ----------
+  function edgeValue(seed) {
+    const r = rng(seed), w = r.pick([5, 10]), a = r.int(5, 9) * w, x = a + w, bins = [0, 1, 2].map(j => [a - w + j * w, a - w + j * w + w - 1]);
+    const label = b => `${b[0]}–${b[1]}`;
+    return q(`A histogram has bins ${bins.map(label).join(', ')}. Which bin does the value ${x} go in?`, null, label(bins[2]), `${x} is the first value of ${label(bins[2])}. The bin before it ends at ${x - 1}.`,
+      [[label(bins[1]), named('An edge value in the wrong bin', `${label(bins[1])} ends at ${x - 1}, so ${x} is not in it. A value on an edge starts the next bin.`)],
+        ['Both of them', named('Counting a value twice', 'Each value goes in exactly one bin; the bins don’t overlap.')]]);
+  }
+  function oneLeaf(seed) {
+    const r = rng(seed), s = r.int(5, 9), l = sorted([r.int(0, 4), r.int(0, 4), r.int(5, 9), r.int(5, 9)]).filter((x, i, A) => A.indexOf(x) === i);
+    const rep = l[0], leaves = sorted([rep, ...l]), vals = leaves.map(x => s * 10 + x);
+    return q(`Which is the stem-and-leaf row for ${r.shuffle(vals).map(fmt).join(', ')}?`, null, `${s} | ${leaves.join(' ')}`, `Every value gets its own leaf, so ${s * 10 + rep}, which appears twice, gets two ${rep}s. The leaves are in order.`,
+      [[`${s} | ${l.join(' ')}`, named('One leaf for a repeated value', `${s * 10 + rep} appears twice, so it needs two leaves. Otherwise the plot loses a value.`)],
+        [`${s} | ${leaves.slice().reverse().join(' ')}`, named('Leaves out of order', 'The leaves are right, but put them in order from least to greatest.'), true]]);
+  }
+  // ---------- Level 6: Spread ----------
+  function rangeAsIqr(seed) {
+    const r = rng(seed), set = T.makeWhere(r.pick(['height', 'points', 'scores', 'travel']), r, r.int(8, 12), v => { const q4 = Stats.quartiles(v); return Stats.range(v) !== q4.q3 - q4.q1; }), v = set.values, qq = Stats.quartiles(v), iqr = qq.q3 - qq.q1;
+    return q('Find the IQR.', T.dataOf(set), fmt(iqr), `Q1 = ${fmt(qq.q1)} and Q3 = ${fmt(qq.q3)}, so the IQR is ${fmt(qq.q3)} − ${fmt(qq.q1)} = ${fmt(iqr)}: the spread of the middle half.`,
+      [[fmt(Stats.range(v)), named('The range instead of the IQR', `${fmt(Stats.range(v))} is the greatest minus the least: the range. The IQR uses only the middle half, Q3 − Q1.`)],
+        [fmt(qq.q3), named('Q3 instead of the IQR', `${fmt(qq.q3)} is Q3. Subtract Q1 from it.`)]], set);
+  }
+  function medianIn(seed) {
+    const r = rng(seed), set = T.makeWhere(r.pick(['height', 'points', 'scores']), r, r.pick([7, 9, 11]), v => { const a = Stats.quartiles(v), b = Stats.quartilesWith(v); return a.q3 - a.q1 !== b.q3 - b.q1 && Stats.range(v) !== a.q3 - a.q1; }), v = set.values, a = Stats.quartiles(v), b = Stats.quartilesWith(v);
+    return q('Find the IQR. (The count is odd.)', T.dataOf(set), fmt(a.q3 - a.q1), `The median, ${fmt(a.med)}, is left out of both halves. Then Q1 = ${fmt(a.q1)} and Q3 = ${fmt(a.q3)}, so the IQR is ${fmt(a.q3 - a.q1)}.`,
+      [[fmt(b.q3 - b.q1), named('Keeping the median in the halves', `That counts the median in both halves. Here, when the count is odd, leave the median out before finding Q1 and Q3.`), true],
+        [fmt(Stats.range(v)), named('The range instead of the IQR', 'That is the greatest minus the least. The IQR is Q3 − Q1.')]], set);
+  }
+  // ---------- Level 7: Change Over Time ----------
+  const lineData = set => ({ chart: { type: 'line', labels: Spread.labelsOf(set), values: set.values, axis: Spread.lineAxis(set.values) }, what: whatOf(set), key: set.key, o: set.o });
+  function lastDay(seed) {
+    const r = rng(seed), set = T.makeWhere('weather', r, 14, v => { const k = Spread.trendOf(v).kind; const d = v[13] - v[12]; return (k === 'up' && d < 0) || (k === 'down' && d > 0); }), k = Spread.trendOf(set.values).kind;
+    const W = { up: 'Mostly went up', down: 'Mostly went down' }, other = k === 'up' ? 'down' : 'up';
+    return q('Over the whole 14 days, what did the temperature do?', lineData(set), W[k], `Day to day it wiggles, and it even ${other === 'down' ? 'dropped' : 'rose'} on the last day, but over the whole two weeks it ${k === 'up' ? 'climbed' : 'fell'}.`,
+      [[W[other], named('Reading the last day, not the trend', `The last day went ${other}, but the trend is the overall direction. Compare the start with the end, and look at the whole line.`)],
+        ['Stayed about the same', named('Missing the trend', 'Look past the wiggles: does the whole line climb or fall?')]], set);
+  }
+  function valueNotChange(seed) {
+    const r = rng(seed), set = T.makeWhere('weather', r, r.int(7, 10), v => v[v.length - 1] !== v[0]), v = set.values, L = Spread.labelsOf(set), a = 0, b = v.length - 1, d = Math.abs(v[b] - v[a]);
+    return q(`From ${L[a]} to ${L[b]}, how much did the temperature ${v[b] > v[a] ? 'go up' : 'go down'}?`, lineData(set), `${fmt(d)} degrees`, `${L[a]} was ${fmt(v[a])}°F and ${L[b]} was ${fmt(v[b])}°F: the change is the difference, ${fmt(d)} degrees.`,
+      [[`${fmt(v[b])} degrees`, named('The value, not the change', `${fmt(v[b])}°F is the temperature on ${L[b]}. The change is the difference between the two days.`)],
+        [`${fmt(v[a] + v[b])} degrees`, named('Adding, not subtracting', 'The change is the difference: subtract.')]], set);
+  }
+  // ---------- Level 8: Shape and the Normal Curve ----------
+  function tailPull(seed) {
+    const set = Shape.shapeSet(seed, rng(seed)() < 0.5 ? 'right' : 'left', true), k = Shape.shapeOf(set.values), big = k === 'right' ? 'The mean' : 'The median';
+    return q('For this data, which is greater: the mean or the median?', { chart: Displays.chartFor(set, 'hist'), what: `${whatOf(set)} (200 values)`, key: set.key, o: set.o }, big,
+      `It is skewed ${k}: the long tail of ${k === 'right' ? 'large' : 'small'} values pulls the mean ${k === 'right' ? 'up' : 'down'}, but the median, the middle value, hardly moves.`,
+      [[k === 'right' ? 'The median' : 'The mean', named('Forgetting that the tail pulls the mean', `In a set skewed ${k}, the mean is pulled toward the long tail, ${k === 'right' ? 'above' : 'below'} the median.`)],
+        ['They are about the same', named('Treating skewed data as symmetric', 'That is true only when there is no long tail.')]], set);
+  }
+  function sampleN(seed) {
+    const r = rng(seed), set = T.makeWhere(r.pick(['shoes', 'siblings', 'pets', 'dice']), r, r.int(4, 6), v => Number.isInteger(mean(v)) && new Set(v).size > 2), v = set.values;
+    const s = r1(Stats.sd(v, true)), sg = r1(Stats.sd(v)), vr = r1(Stats.variance(v, true));
+    return q('These values are a <strong>sample</strong> from a bigger group. Which is the sample standard deviation, <em>s</em>, to the nearest tenth?', T.dataOf(set), fmt(s), `For a sample, divide the total of the squared distances by n − 1 = ${v.length - 1}, then take the square root: s ≈ ${fmt(s)}.`,
+      [[fmt(sg), named('Dividing by n for a sample', `That divides by n = ${v.length}: that is σ, for a whole population. A sample divides by n − 1.`)],
+        [fmt(vr), named('Forgetting the square root', 'That is the variance. The standard deviation is its square root.')]], set);
+  }
+  function bothTails(seed) {
+    const m = rng(seed).pick(Shape.MODELS), at = k => fmt(+(m.mu + k * m.sd).toFixed(6));
+    return q(`The ${m.what} follow a normal curve with a mean of ${fmt(m.mu)} and a standard deviation of ${fmt(m.sd)}. About what percent are above ${at(1)}?`, null, '16%', `${at(1)} is 1 SD above the mean. 68% are within 1 SD, so 32% are outside, split evenly between the two tails: 16% above.`,
+      [['32%', named('Both tails, not one', `32% are outside 1 SD on both sides together. Above ${at(1)} is just one tail: half of it.`)],
+        ['84%', named('The wrong side', `84% are below ${at(1)}. The part above it is the small tail.`)],
+        ['68%', named('Inside, not above', '68% are within 1 SD of the mean, on both sides.')]]);
+  }
+
+  const GROUPS = [
+    { n: 1, title: 'Kinds of Data', list: [{ name: 'Numbers Used as Names', make: namesAsNumbers }, { name: 'A Question With One Answer', make: oneAnswer }] },
+    { n: 2, title: 'Organize It', list: [{ name: 'Leaving Out a Count of 0', make: zeroRow }, { name: 'Counting a Value Twice', make: twice }] },
+    { n: 3, title: 'Center', list: [{ name: 'The Median Without Sorting', make: s => unsortedFrom(T.makeWhere(rng(s).pick(['height', 'points', 'scores']), rng(s + 1), 7 + 2 * (s % 2), v => v[(v.length - 1) / 2] !== median(v) && new Set(v).size === v.length && r1(mean(v)) !== median(v) && r1(mean(v)) !== v[(v.length - 1) / 2])) },
+      { name: 'The Total as the Mean', make: totalAsMean }, { name: 'The Count as the Mode', make: countAsMode }] },
+    { n: 4, title: 'Showing Categories', list: [{ name: 'Counting Lines, Not the Scale', make: linesQ }, { name: 'Part to Part, Not Part to Whole', make: partToPart }] },
+    { n: 5, title: 'Showing Numbers', list: [{ name: 'An Edge Value in the Wrong Bin', make: edgeValue }, { name: 'One Leaf for a Repeated Value', make: oneLeaf }] },
+    { n: 6, title: 'Spread', list: [{ name: 'The Range Instead of the IQR', make: rangeAsIqr }, { name: 'Keeping the Median in the Halves', make: medianIn }] },
+    { n: 7, title: 'Change Over Time', list: [{ name: 'Reading the Last Day, Not the Trend', make: lastDay }, { name: 'The Value, Not the Change', make: valueNotChange }] },
+    { n: 8, title: 'Shape and the Normal Curve', list: [{ name: 'Forgetting That the Tail Pulls the Mean', make: tailPull }, { name: 'Dividing by n for a Sample', make: sampleN }, { name: 'Both Tails, Not One', make: bothTails }] },
+  ];
+  return { GROUPS };
 })();
 </script>
 <script>/* Tests for the Data Coach engine. Open data-coach-tests.html; results show on the page and in
@@ -1864,7 +2275,7 @@ const Spread = (() => {
 
   // ---------- Level 7: change over time ----------
   t('Level 7: trends are clear, lines are drawable, and readings are accepted, on 120 seeds', () => {
-    const up = Spread.trendOf([50, 52, 51, 55, 57, 56, 60, 62]).kind, down = Spread.trendOf([70, 66, 67, 62, 60, 58]).kind, flat = Spread.trendOf([60, 62, 59, 61, 60, 62, 59, 61]).kind;
+    const up = Spread.trendOf([50, 52, 51, 55, 57, 56, 60, 62]).kind, down = Spread.trendOf([70, 66, 67, 62, 60, 58]).kind, flat = Spread.trendOf([60, 62, 59, 61, 60, 62, 61, 60]).kind;
     if (up !== 'up' || down !== 'down' || flat !== 'flat') return `trend kinds ${up} ${down} ${flat}`;
     for (let s = 0; s < 120; s++) for (const th of Tasks.level(7).themes) {
       const q = th.make(6000 + s, false);
@@ -1919,6 +2330,135 @@ const Spread = (() => {
       if (type === 'box' && f.fit !== (kind === 'num')) return `${k} box`;
       if (!f.fit && (q.ask !== 'choice' || q.choices.filter(c => c.right).length !== 1)) return `${k} ${type}: misfit question`;
       if (f.fit && q.ask !== type) return `${k} ${type}: should be drawn by the student`;
+    }
+    return true;
+  });
+
+  // ---------- Level 8: shape and the normal curve ----------
+  t('standard deviation: σ and s match a reference on 300 sets; the classic set has σ = 2; each slip is named', () => {
+    for (let s = 0; s < 300; s++) {
+      const v = Data.make(['height', 'points', 'dice', 'run'][s % 4], s, 3 + (s % 20)).values, n = v.length, m = v.reduce((a, b) => a + b, 0) / n;
+      let ss = 0; for (const x of v) ss += (x - m) * (x - m);
+      if (Math.abs(Stats.sd(v) - Math.sqrt(ss / n)) > 1e-9 || Math.abs(Stats.sd(v, true) - Math.sqrt(ss / (n - 1))) > 1e-9) return `set ${s}`;
+    }
+    const v = [2, 4, 4, 4, 5, 5, 7, 9], set = { key: 'freethrows', seed: 0, o: { skill: '50' }, values: v }, q = Shape.sdTask(set, false), qs = Shape.sdTask(set, true);
+    return Stats.sd(v) === 2 && q.check('2').status === 'right' && /variance/.test(q.check('4').msg) && /that is s/.test(q.check('2.1').msg) && /MAD/.test(q.check('1.5').msg)
+      && qs.check('2.1').status === 'right' && qs.check('2.14').status === 'right' && /that is σ/.test(qs.check('2').msg) || 'sd slips';
+  });
+  t('shape: 200-value sets have the shape asked for, the mean sits toward the tail, and symmetric sets keep them together', () => {
+    for (let s = 0; s < 60; s++) for (const k of ['sym', 'right', 'left']) {
+      const v = Shape.shapeSet(s, k, true).values, d = Stats.mean(v) - Stats.median(v);
+      if (Shape.shapeOf(v) !== k || v.length !== 200) return `${k} ${s}: shape`;
+      if (k === 'right' ? d <= 0 : k === 'left' ? d >= 0 : Math.abs(d) > 0.05 * Stats.sd(v)) return `${k} ${s}: mean and median`;
+    }
+    return true;
+  });
+  t('Level 8: every theme and check question has one right answer that passes, on 80 seeds; curves fit at the mean and σ and not at the start', () => {
+    const L = Tasks.level(8);
+    for (let s = 0; s < 80; s++) {
+      for (const th of L.themes) {
+        const q = th.make(8000 + s, s === 0);
+        if (q.ask === 'choice' && q.choices.filter(c => c.right).length !== 1) return `${th.key} ${s}: ${q.prompt}`;
+        if (q.ask === 'answer' && q.check(q.want).status !== 'right') return `${th.key} ${s}: "${q.want}"`;
+        if (q.ask === 'bar' && (q.check(q.counts.slice(), q.good).status !== 'right' || q.counts.reduce((a, b) => a + b, 0) !== 200)) return `table ${s}`;
+        if (q.ask === 'curve' && (q.check({ mu: q.mu, sd: q.sig }).status !== 'right' || q.check(q.start).status === 'right')) return `curve ${s}`;
+        if (q.ask === 'curve' && q.check({ mu: q.mu + q.sig, sd: q.sig }).status === 'right') return `curve ${s}: an off-center curve passes`;
+      }
+      for (const q of L.check(8500 + s)) if (q.ask === 'choice' ? q.choices.filter(c => c.right).length !== 1 : q.check(q.want).status !== 'right') return `check ${s}: ${q.prompt}`;
+    }
+    return true;
+  });
+  t('68-95-99.7: every rule question, as a percent and as a count, accepts its answer and names the one-side slip', () => {
+    for (const m of Shape.MODELS) for (const item of Shape.RULE) for (const count of [false, true]) {
+      const q = Shape.ruleTask(m, item, count);
+      if (q.check(q.want).status !== 'right') return `${item} ${count}: "${q.want}"`;
+    }
+    const above = Shape.ruleTask(Shape.MODELS[0], ['above', 1, null, 16], false), half = Shape.ruleTask(Shape.MODELS[0], ['between', 0, 1, 34], true);
+    return /one side/.test(above.check('32').msg) && /half/.test(half.check('136').msg) && /percent/.test(half.check('34').msg) || 'rule slips';
+  });
+  t('normal curve in the Lab: it fits only numbers with 50 or more values and no strong skew', () => {
+    for (const { k, o } of variants()) for (const n of [20, 200]) {
+      const set = Data.make(k, 5, n, o), f = Shape.fitOf(set), kind = Data.kindOf(set), q = Shape.labTask(set);
+      if (f.fit && (kind !== 'num' || n < 50)) return `${k} ${n}: should not fit`;
+      if (f.fit ? q.ask !== 'curve' : q.ask !== 'choice' || q.choices.filter(c => c.right).length !== 1) return `${k} ${n}: question`;
+    }
+    return Shape.fitOf(Data.make('height', 5, 200, { grade: '9' })).fit && !Shape.fitOf(Data.make('screen', 5, 200)).fit || 'height should fit, screen time should not';
+  });
+
+  // ---------- Common Mistakes ----------
+  t('common mistakes: every mistake, on 100 seeds, makes a question with one right choice, no repeated choices, and its mistake named', () => {
+    if (Mistakes.GROUPS.map(g => g.n).join() !== Tasks.LEVELS.map(l => l.n).join()) return 'a level has no mistakes';
+    for (const g of Mistakes.GROUPS) for (const m of g.list) for (let s = 0; s < 100; s++) {
+      const q = m.make(4000 + s), html = q.choices.map(c => c.html);
+      if (q.choices.filter(c => c.right).length !== 1) return `${m.name} ${s}: right choices`;
+      if (new Set(html).size !== html.length || q.choices.length < 2) return `${m.name} ${s}: choices ${html.join(' / ')}`;
+      if (!q.choices.some(c => !c.right && !c.almost && /<strong>/.test(c.msg))) return `${m.name} ${s}: no named mistake`;
+    }
+    return true;
+  });
+  t('common mistakes: the named mistake is really wrong (checked against the measures)', () => {
+    for (let s = 0; s < 100; s++) {
+      const md = Mistakes.GROUPS[2].list[0].make(s), mn = Mistakes.GROUPS[2].list[1].make(s), iqr = Mistakes.GROUPS[5].list[0].make(s), sd = Mistakes.GROUPS[7].list[1].make(s);
+      const right = q => q.choices.find(c => c.right).html;
+      if (+right(md) !== Stats.median(md.set.values) || +right(mn) !== Stats.mean(mn.set.values) || +right(iqr) !== Stats.iqr(iqr.set.values)) return `seed ${s}: a right answer is not the measure`;
+      if (+right(sd) !== Stats.round(Stats.sd(sd.set.values, true), 1)) return `seed ${s}: s`;
+    }
+    return true;
+  });
+
+  // ---------- Final review fixes ----------
+  t('readings of a difference never accept 0 or the wrong sign, and a careful reading still passes', () => {
+    for (let s = 0; s < 999; s++) {
+      const set = Data.make(['weather', 'plant', 'rainfall'][s % 3], s, [8, 14, 12][s % 3]), q = Spread.readLineTask(set, s, 'change');
+      if (!/how much/.test(q.prompt)) continue;
+      if (q.check('0').status === 'right' || q.check(String(-q.want)).status === 'right') return `change ${s}: ${q.prompt} want ${q.want} accepts 0 or ${-q.want}`;
+      if (q.check(q.want).status !== 'right') return `change ${s}: exact`;
+    }
+    for (let s = 0; s < 300; s++) { const q = Spread.readBoxTask(Data.make('height', s, 13), s); if (/IQR/.test(q.prompt) && q.check('0').status === 'right') return `IQR ${s} accepts 0`; }
+    return true;
+  });
+  t('trends are asked only when clear: the reviewers\' arch and level-ends lines are not called up or down', () => {
+    const arch = Spread.trendOf([47, 48, 52, 54, 55, 55, 48, 54, 55, 49, 49, 47, 47, 43]).kind, level = Spread.trendOf([64, 59, 59, 60, 63, 69, 68, 63, 66, 61, 66, 66, 68, 64]).kind;
+    if (arch === 'up' || arch === 'down' || level === 'up' || level === 'down') return `arch ${arch}, level ends ${level}`;
+    for (let s = 0; s < 200; s++) {
+      const q = Tasks.level(7).themes[1].make(7100 + s, false), v = q.data.chart.values, t3 = Math.floor(v.length / 3), ends = Stats.mean(v.slice(-t3)) - Stats.mean(v.slice(0, t3)), k = Spread.trendOf(v).kind;
+      if ((k === 'up' && ends <= 0) || (k === 'down' && ends >= 0)) return `trend ${s}: ${k} but the ends say otherwise`;
+    }
+    return true;
+  });
+  t('the Level 7 check reads one value and one change; outlier questions have outliers about half the time', () => {
+    for (let s = 0; s < 60; s++) { const c = Tasks.level(7).check(9100 + s); if (!/value (on|in)/.test(c[1].prompt) || !/how much|value (on|in)/.test(c[2].prompt)) return `check ${s}: ${c[1].prompt} / ${c[2].prompt}`; }
+    let withOut = 0; for (let s = 0; s < 200; s++) if (Stats.outliers(Tasks.level(6).themes[3].make(9300 + s, false).set.values).length) withOut++;
+    return withOut > 70 && withOut < 130 || `${withOut} of 200 outlier questions have outliers`;
+  });
+  t('a whisker is said to reach an outlier only on a side that has one', () => {
+    const q = Spread.boxTask({ key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] }), w = q.want.slice();
+    const lowRight = w.slice(); lowRight[4] = 20;   // the lower whisker right at 9 (the least value), the upper one wrong
+    const reach = w.slice(); reach[4] = 48;
+    return !/reaches an outlier/.test(q.check(lowRight).msg) && /reaches an outlier/.test(q.check(reach).msg) || `${q.check(lowRight).msg} / ${q.check(reach).msg}`;
+  });
+  t('the Lab never calls a bell-shaped scenario skewed: a normal curve fits heights, points, run times, sleep and hard-test scores at 50 values, every seed', () => {
+    for (const [k, o] of [['height', {}], ['points', {}], ['run', {}], ['sleep', {}], ['scores', { test: 'hard' }], ['shoes', {}]]) for (let s = 0; s < 150; s++) {
+      const set = Data.make(k, s, 50, o);
+      if (!Shape.fitOf(set).fit) return `${k} ${s}: called ${Shape.fitOf(set).short}`;
+    }
+    return !Shape.fitOf(Data.make('screen', 5, 200)).fit || 'screen time at 200 should be skewed';
+  });
+
+  t('outlier practice: every scenario comes both with outliers and without, so its name never gives the answer away', () => {
+    const seen = {};
+    for (let s = 0; s < 400; s++) { const q = Tasks.level(6).themes[3].make(9500 + s, false), k = q.set.key, has = Stats.outliers(q.set.values).length > 0; (seen[k] = seen[k] || new Set()).add(has); }
+    const one = Object.entries(seen).filter(([, v]) => v.size < 2).map(([k]) => k);
+    return Object.keys(seen).length >= 4 && !one.length || `only one kind for ${one.join(', ')} (${Object.keys(seen).join(', ')})`;
+  });
+
+  t('every worked example uses values its scenario can really make (a die never shows 7)', () => {
+    for (const lv of Tasks.LEVELS) for (const th of lv.themes) {
+      const q = th.make(0, true), set = q.set, sc = set && Data.SCENARIOS[set.key];
+      if (!sc || !sc.cats) continue;
+      const ok = sc.cats(Object.assign({}, Data.optsOf(set.key), set.o || {}));
+      const bad = set.values.filter(x => !ok.includes(x));
+      if (bad.length) return `Level ${lv.n} ${th.title}: ${set.key} can't make ${bad.join(', ')}`;
     }
     return true;
   });

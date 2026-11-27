@@ -69,6 +69,8 @@ table.freq tfoot th, table.freq tfoot td { font-weight: 700; }
 .choice.right::after { content: "  \2713  Right"; font-weight: 700; font-size: 0.9rem; }
 .choice.wrong { background: var(--bad-bg); border-color: var(--bad-b); color: var(--bad); }
 .choice.wrong::after { content: "  \2717  Not this one"; font-weight: 700; font-size: 0.9rem; }
+.choice.almost { background: var(--warn-bg); border-color: var(--warn-b); color: var(--warn); }
+.choice.almost::after { content: "  Almost"; font-weight: 700; font-size: 0.9rem; }
 .choice.shown { background: var(--warn-bg); border-color: var(--warn-b); color: var(--warn); }
 .choice.shown::after { content: "  The answer"; font-weight: 700; font-size: 0.9rem; }
 .choice[aria-disabled="true"] { cursor: default; }
@@ -180,6 +182,9 @@ details[open] > summary::before { transform: rotate(90deg); }
 .c-edit:focus { outline: none; }
 .c-edit:focus-visible .c-handle, .c-edge:focus-visible .c-knob { stroke: var(--title); stroke-width: 3px; }
 .c-edit:focus-visible .c-bar { stroke: var(--title); stroke-width: 3px; }
+/* A line graph's column: its whole column is outlined, so focus shows even before its point is placed. */
+.c-edit:focus-visible .c-lhit { stroke: var(--title); stroke-width: 2px; }
+.c-edit:focus-visible .c-lpt { stroke: var(--title); stroke-width: 3px; }
 .c-rim { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
 .c-slice { stroke: var(--border); stroke-width: 1.5; }
 /* A slice in a real color (red, blue...) is set off by a cream edge, which shows on mid-tones; pale slices keep the dark edge. */
@@ -229,6 +234,7 @@ table.stem-in input { width: 11em; max-width: 100%; letter-spacing: 0.1em; }
 .c-knobg { cursor: ew-resize; }
 .c-knobg:focus { outline: none; }
 .c-knobg:focus-visible .c-knob { stroke: var(--title); stroke-width: 3px; }
+.c-curve { fill: none; stroke: var(--title); stroke-width: 2.5; stroke-linejoin: round; }
 .c-lline { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
 .c-lpt { fill: var(--primary); stroke: var(--card); stroke-width: 1.5; }
 .c-break { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }

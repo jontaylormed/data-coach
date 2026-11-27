@@ -27,14 +27,17 @@ const Spread = (() => {
   const near = (x, y, snap) => Math.abs(x - y) <= snap / 2 + 1e-9;
   // A value read off a graph. A mark between the scale's lines (k > 0) is right within k thirds of a step (k = 2 for a
   // difference of two readings); a mark on a line (k = 0) must be read exactly. Near misses are Close.
-  function readCheck(t, want, step, k = 1, slips = []) {
+  // A difference (a change, an IQR: diff) is never right at 0 or with the wrong sign, and its allowance is at most half of it,
+  // so a small change of 2.2 on a scale of 5s can't be answered 0.
+  function readCheck(t, want, step, k = 1, slips = [], diff = false) {
     const s = checkOne(t, want);
     if (s) return s;
-    const x = Stats.read(t).nums[0];
+    const x = Stats.read(t).nums[0], cap = tol => (diff ? Math.min(tol, Math.abs(want) / 2) : tol);
+    const sideOk = !diff || (x > 0) === (want > 0);
     // A close reading is right before any slip is named: on a graph, a value near the answer can't be told apart from it.
-    if (Math.abs(x - want) <= (k * step) / 3 + 1e-9) return R('right', `Right! It is exactly ${fmt(want)}; a careful reading between the lines is close enough.`);
+    if (sideOk && Math.abs(x - want) <= cap((k * step) / 3) + 1e-9) return R('right', `Right! It is exactly ${fmt(want)}; a careful reading between the lines is close enough.`);
     for (const [y, msg] of slips) if (same(x, y)) return R('wrong', msg);
-    if (Math.abs(x - want) <= (Math.max(1, k) * step) / 2 + 1e-9) return R('almost', `Close: read against the scale more carefully. It is ${fmt(want)}.`);
+    if (sideOk && Math.abs(x - want) <= cap((Math.max(1, k) * step) / 2) + 1e-9) return R('almost', `Close: read against the scale more carefully. It is ${fmt(want)}.`);
     return null;
   }
   const onGrid = (x, lo, step) => Math.abs((x - lo) / step - Math.round((x - lo) / step)) < 1e-9;
@@ -81,7 +84,7 @@ const Spread = (() => {
 
   // ---------- Outliers ----------
   function outlierTask(set) {
-    const v = set.values, q = Stats.quartiles(v), f = Stats.fences(v), out = Stats.outliers(v), iq = q.q3 - q.q1;
+    const v = set.values, q = Stats.quartiles(v), f = Stats.fences(v), out = [...new Set(Stats.outliers(v))], iq = q.q3 - q.q1;   // each outlier value once (two 3s are one answer, 3)
     const ans = out.length ? `${T.andList(out.map(fmt))} ${out.length === 1 ? 'is an outlier' : 'are outliers'}.` : 'There are no outliers.';
     return { prompt: 'Which values are outliers by the 1.5 × IQR rule? Type them (like 3 and 95), or type <strong>none</strong>.', ask: 'answer', data: T.dataOf(set), set, want: out.length ? out.join(' and ') : 'none',
       check: t => {
@@ -121,7 +124,10 @@ const Spread = (() => {
       check: cur => {
         const off = want.map((x, i) => i).filter(i => !at(cur[i], want[i]));
         if (!off.length) return R('right', `Right! ${fmt(five.lo)}, ${fmt(five.q1)}, ${fmt(five.med)}, ${fmt(five.q3)}, ${fmt(five.hi)}.${want.some(x => !onGrid(x, 0, snap)) ? ` (Each handle is as close as it can go.)` : ''}`);
-        if (five.out.length && (off.includes(0) || off.includes(4)) && (at(cur[0], Math.min(...v)) || at(cur[4], Math.max(...v)))) return R('wrong', 'A whisker reaches an outlier. Each whisker stops at the last value that isn’t an outlier.');
+        // Each side on its own: a whisker reaches an outlier only if that side has one and the whisker is out at it.
+        const lowOut = five.out.some(x => x < five.q1), highOut = five.out.some(x => x > five.q3);
+        const reach = (off.includes(0) && lowOut && at(cur[0], Math.min(...v))) || (off.includes(4) && highOut && at(cur[4], Math.max(...v)));
+        if (reach) return R('wrong', 'A whisker reaches an outlier. Each whisker stops at the last value that isn’t an outlier.');
         if (off.every(i => i === 1 || i === 3) && at(cur[1], w.q1) && at(cur[3], w.q3)) return R('almost', 'Almost: here, when the count is odd, the median is left out of both halves before finding Q1 and Q3.');
         return R('wrong', `Check the ${T.andList(off.map(i => PART[i]))}.`);
       },
@@ -137,7 +143,7 @@ const Spread = (() => {
     // "About" when a mark sits between the scale's lines; a reading of a difference may be off by two readings' worth.
     const about = k === 'median' ? !onGrid(five.med, ax.lo, ax.step) : !onGrid(five.q1, ax.lo, ax.step) || !onGrid(five.q3, ax.lo, ax.step);
     return { prompt: `${about ? 'About what' : 'What'} is the ${k === 'median' ? 'median' : 'IQR'}, read from the box plot?`, ask: 'answer', data, set, want: String(want),
-      check: t => readCheck(t, want, ax.step, !about ? 0 : k === 'median' ? 1 : 2, k === 'median' ? [[five.q1, 'That is Q1, the box’s left edge. The median is the line inside the box.'], [five.q3, 'That is Q3, the box’s right edge. The median is the line inside the box.']] : [[five.hi - five.lo, 'That is the length from whisker to whisker. The IQR is just the box: Q3 − Q1.'], [five.q3, 'That is Q3. The IQR is Q3 − Q1: the length of the box.']]) || R('wrong', 'Not quite. Read the box plot’s marks against the number line.'),
+      check: t => readCheck(t, want, ax.step, !about ? 0 : k === 'median' ? 1 : 2, k === 'median' ? [[five.q1, 'That is Q1, the box’s left edge. The median is the line inside the box.'], [five.q3, 'That is Q3, the box’s right edge. The median is the line inside the box.']] : [[five.hi - five.lo, 'That is the length from whisker to whisker. The IQR is just the box: Q3 − Q1.'], [five.q3, 'That is Q3. The IQR is Q3 − Q1: the length of the box.']], k !== 'median') || R('wrong', 'Not quite. Read the box plot’s marks against the number line.'),
       hints: [k === 'median' ? 'The median is the line inside the box.' : 'The IQR is the length of the box: Q3 (its right edge) minus Q1 (its left edge).'], answer: k === 'median' ? `The median is ${fmt(want)}.` : `${fmt(five.q3)} − ${fmt(five.q1)} = ${fmt(want)}.`,
       steps: k === 'median' ? [{ html: `median = ${fmt(want)}`, why: 'Read the line inside the box.' }] : [{ html: `Q1 = ${fmt(five.q1)}, Q3 = ${fmt(five.q3)}`, why: 'Read the box’s two edges.' }, { html: `${fmt(five.q3)} − ${fmt(five.q1)} = ${fmt(want)}`, why: 'The IQR is the box’s length.' }] };
   }
@@ -146,7 +152,8 @@ const Spread = (() => {
   const pickSet = (keys, nLo, nHi, ok = () => true) => seed => { const r = rng(seed), key = r.pick(keys); return T.makeWhere(key, r, r.int(nLo, nHi), ok); };
   // A whole-number mean keeps the distances easy; the MAD itself may be rounded to the nearest tenth.
   const madOk = v => Number.isInteger(Stats.mean(v)) && new Set(v).size > 2;
-  const outOk = r => v => (r() < 0.5) === (Stats.outliers(v).length > 0);
+  // Half the outlier questions have outliers and half have none: the coin is flipped once per question, not per candidate set.
+  const outOk = r => { const want = r() < 0.5; return v => want === (Stats.outliers(v).length > 0); };
   const L6 = { n: 6, title: 'Spread', themes: [
     { key: 'range', title: 'Range', make: (seed, ex) => rangeTask(ex ? make('height', 3, 9) : pickSet(NUM6, 6, 12)(seed)),
       intro: 'The range is the greatest value minus the least: how far the values spread.' },
@@ -154,7 +161,8 @@ const Spread = (() => {
       intro: 'Q1 and Q3 are the middles of the lower and upper halves. The IQR, Q3 − Q1, is the spread of the middle half.' },
     { key: 'mad', title: 'Mean Absolute Deviation', make: (seed, ex) => madTask(ex ? { key: 'siblings', seed: 0, o: {}, values: [2, 4, 1, 5, 3] } : pickSet(['shoes', 'siblings', 'pets', 'dice', 'points'], 4, 6, madOk)(seed)),
       intro: 'The MAD is the average distance of the values from the mean: a small MAD means the values sit close to the mean.' },
-    { key: 'outliers', title: 'Outliers', make: (seed, ex) => outlierTask(ex ? { key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] } : (() => { const r = rng(seed); return pickSet(['travel', 'reunion', 'screen', 'points', 'scores'], 9, 14, outOk(r))(seed); })()),
+    // Outliers: the coin (with or without) and the scenario are separate draws, so a scenario's name never gives the answer away.
+    { key: 'outliers', title: 'Outliers', make: (seed, ex) => outlierTask(ex ? { key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] } : (() => { const r = rng(seed), ok = outOk(r); return pickSet(['travel', 'reunion', 'screen', 'points', 'scores'], 9, 14, ok)(T.seedOf(r)); })()),
       intro: 'An outlier is far from the rest: below Q1 − 1.5 × IQR or above Q3 + 1.5 × IQR (the fences).' },
     { key: 'box', title: 'Box Plot', make: (seed, ex) => boxTask(ex ? make('scores', 1, 11, { test: 'hard' }) : pickSet(['height', 'points', 'scores', 'travel', 'reunion'], 9, 15)(seed)),
       intro: 'A box plot shows five numbers: the least, Q1, the median, Q3 and the greatest (outliers as dots). The box is the middle half.' },
@@ -180,20 +188,29 @@ const Spread = (() => {
   const labeled = (n, i) => n <= 20 || i % Math.ceil(n / 12) === 0;
   function lineTask(set) {
     const v = set.values, axis = lineAxis(v), snap = snapOf(v, axis), labels = labelsOf(set);
-    return { prompt: `Draw a line graph: drag each ${unitWord(set)}’s point (or use the arrow keys) to its value. The points join into a line.`, ask: 'line', data: T.dataOf(set), set, labels, axis, snap,
+    return { prompt: `Draw a line graph: tap or click above each ${unitWord(set)} at its value to place its point, then drag it or use the arrow keys to adjust. The points join into a line.`, ask: 'line', data: T.dataOf(set), set, labels, axis, snap,
       check: cur => {
         if (cur.some(x => x === null)) return R('info', `Place a point for every ${unitWord(set)}.`);
         const off = v.map((x, i) => i).filter(i => !near(cur[i], v[i], snap));
         return off.length ? R('wrong', `Check the ${off.length === 1 ? 'point' : 'points'} for ${T.andList(off.map(i => labels[i]))}.`) : R('right', `Right! Every point is at its value, joined in order.${v.some(x => !onGrid(x, 0, snap)) ? ` (Each point is as close as it can go: to the nearest ${fmt(snap)}.)` : ''}`);
       },
-      hints: [`Go in order: ${labels[0]} first. Find its value in the list, then drag its point to that height on the scale.`] };
+      hints: [`Go in order: ${labels[0]} first. Find its value in the list, then tap or click above ${labels[0]} at that height on the scale.`] };
   }
-  // The overall direction: the slope of the best-fit line, over the whole stretch.
+  /* The overall direction, called only when it is clear, so a fair reading of the line is never marked wrong.
+     Up or down: the best-fit line climbs (or falls) by more than a third of the range, it fits well (R² of 0.5 or more,
+     so an arch or a zigzag doesn't count), and the last third of the stretch sits clearly above (or below) the first
+     third, as the pages teach: compare where the line starts with where it ends up. About the same: both the
+     best-fit change and the change from the first third to the last are small. Anything else is not asked about. */
   function trendOf(v) {
     const n = v.length, xm = (n - 1) / 2, ym = Stats.mean(v);
     const b = v.reduce((s, y, i) => s + (i - xm) * (y - ym), 0) / v.reduce((s, y, i) => s + (i - xm) ** 2, 0);
     const change = b * (n - 1), spread = Math.max(1, Stats.range(v));
-    return { change, kind: change > 0.35 * spread ? 'up' : change < -0.35 * spread ? 'down' : Math.abs(change) < 0.12 * spread ? 'flat' : null };
+    const ssTot = v.reduce((s, y) => s + (y - ym) ** 2, 0), ssRes = v.reduce((s, y, i) => s + (y - ym - b * (i - xm)) ** 2, 0), r2 = ssTot ? 1 - ssRes / ssTot : 0;
+    const third = Math.max(1, Math.floor(n / 3)), ends = Stats.mean(v.slice(n - third)) - Stats.mean(v.slice(0, third));
+    const kind = change > 0.35 * spread && r2 >= 0.5 && ends > 0.35 * spread ? 'up'
+      : change < -0.35 * spread && r2 >= 0.5 && ends < -0.35 * spread ? 'down'
+      : Math.abs(change) < 0.12 * spread && Math.abs(ends) < 0.25 * spread ? 'flat' : null;
+    return { change, r2, ends, kind };
   }
   const TREND = { up: 'Mostly went up', down: 'Mostly went down', flat: 'Stayed about the same' };
   const timeData = set => ({ chart: { type: 'line', labels: labelsOf(set), values: set.values, axis: lineAxis(set.values) }, what: whatOf(set), key: set.key, o: set.o });
@@ -218,7 +235,7 @@ const Spread = (() => {
       const [a, b] = r.pick(pairs);
       const d = Math.abs(v[b] - v[a]), up = v[b] > v[a], about = !onGrid(v[a], ax.lo, ax.step) || !onGrid(v[b], ax.lo, ax.step);
       return { prompt: `From ${L[a]} to ${L[b]}, ${about ? 'about ' : ''}how much did the value ${up ? 'go up' : 'go down'}?`, ask: 'answer', data, set, want: String(d),
-        check: t => readCheck(t, d, ax.step, about ? 2 : 0, [[v[b], `That is the value ${on} ${L[b]}. Subtract the two values.`], [v[a], `That is the value ${on} ${L[a]}. Subtract the two values.`], [v[a] + v[b], 'Subtract, don’t add: the change is the difference.']]) || R('wrong', `Not quite. Read both points, then subtract.`),
+        check: t => readCheck(t, d, ax.step, about ? 2 : 0, [[v[b], `That is the value ${on} ${L[b]}. Subtract the two values.`], [v[a], `That is the value ${on} ${L[a]}. Subtract the two values.`], [v[a] + v[b], 'Subtract, don’t add: the change is the difference.']], true) || R('wrong', `Not quite. Read both points, then subtract.`),
         hints: [`Read the points for ${L[a]} and ${L[b]}, then find the difference.`], answer: `${fmt(Math.max(v[a], v[b]))} − ${fmt(Math.min(v[a], v[b]))} = ${fmt(d)}.`,
         steps: [{ html: `${L[a]}: ${fmt(v[a])}`, why: 'Read the first point.' }, { html: `${L[b]}: ${fmt(v[b])}`, why: 'Read the second point.' }, { html: `${fmt(Math.max(v[a], v[b]))} − ${fmt(Math.min(v[a], v[b]))} = ${fmt(d)}`, why: 'The change is the difference.' }] };
     }
@@ -252,7 +269,7 @@ const Spread = (() => {
       intro: 'Read a point by going up from its day to the line, then across to the scale. A change is the difference between two points.' },
     { key: 'which', title: 'Which Display?', make: (seed, ex) => whichTimeQ(ex ? WHICH_TIME[0] : rng(seed).pick(WHICH_TIME)),
       intro: 'Change over time: a line graph keeps the order. Counts of categories: a bar graph.' },
-  ], check: seed => { const r = rng(seed), s = () => T.seedOf(r); return [trendTask(trendSet(s())), readLineTask(readSet(s()), s()), readLineTask(readSet(s()), s()), whichTimeQ(r.pick(WHICH_TIME))]; } };
+  ], check: seed => { const r = rng(seed), s = () => T.seedOf(r); return [trendTask(trendSet(s())), readLineTask(readSet(s()), s(), 'value'), readLineTask(readSet(s()), s(), 'change'), whichTimeQ(r.pick(WHICH_TIME))]; } };   // 7.3: one value read, one change
   T.LEVELS.push(L7);
 
   // ---------- The Lab: box plots and line graphs of the student's own data ----------
@@ -280,7 +297,7 @@ const Spread = (() => {
     if (type === 'box') return boxTask(set);
     if (set.values.length <= HAND) return lineTask(set);
     const q = trendOf(set.values).kind ? trendTask(set) : readLineTask(set, seed, rng(seed)() < 0.5 ? 'value' : 'change');
-    return { ...q, prompt: `${set.values.length} ${unitWord(set)}s are too many points to drag, so here is the line graph. ${q.prompt}` };
+    return Object.assign({}, q, { prompt: `${set.values.length} ${unitWord(set)}s are too many points to drag, so here is the line graph. ${q.prompt}` });
   }
 
   return { HAND, rangeTask, iqrTask, madTask, outlierTask, boxTask, readBoxTask, axisOf, lineTask, trendTask, readLineTask, trendOf, lineAxis, labelsOf, whichTimeQ, WHICH_TIME, fitOf, misfitTask, labTask, checkOne };

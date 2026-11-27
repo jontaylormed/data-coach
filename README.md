@@ -1,6 +1,6 @@
 # Data Coach
 
-Students make a data set, organize it, draw every display that fits, and find its center and spread.
+Students make a data set, organize it, draw every display that fits, find its center and spread, and fit a normal curve.
 
 **Live site:** <https://jontaylormed.github.io/data-coach/>
 
@@ -18,16 +18,17 @@ Students make a data set, organize it, draw every display that fits, and find it
 |---|---|
 | Data Lab | Picks a data set (coin flips, dice, heights, screen time, rainfall and more), chooses how many values, and makes new data any time |
 | Tally It / Build the Table | Tallies the data and builds a frequency table |
-| Draw a Display | Draws a bar graph, pie chart, dot plot, histogram, stem-and-leaf plot, box plot or line graph |
-| Measures (Guess First) | Guesses the center and spread, then finds them |
+| Draw a Display | Draws a bar graph, pie chart, dot plot, histogram, stem-and-leaf plot, box plot or line graph, or fits a normal curve over a histogram |
+| Measures (Guess First) | Guesses the center and spread, then finds them: mean, median, mode, range, IQR, MAD, both standard deviations and the shape |
 | Quiz Me | Answers questions about the data set they just made |
-| Learn It | Works through seven levels: kinds of data, organizing, center, showing categories, showing numbers, spread, and change over time |
+| Learn It | Works through eight levels: kinds of data, organizing, center, showing categories, showing numbers, spread, change over time, and shape and the normal curve |
+| Common Mistakes | For each of 18 common mistakes, picks the right answer from choices that include that mistake; a wrong choice names the mistake |
 
 Sometimes the Lab draws a display that doesn't fit the data and asks what is wrong with it.
 
 ## Who it's for
 
-Grades 6–12. Younger students start with kinds of data and center. Older students go on to spread, box plots and outliers.
+Grades 6–12. Levels 1–6 cover Grade 6 statistics, Level 7 (graphs over time) runs through Grade 8, and Level 8 (shape, standard deviation and the normal curve) is high school.
 
 Common Core State Standards for Mathematics:
 
@@ -37,9 +38,13 @@ Common Core State Standards for Mathematics:
 | 6.SP.A.3 | Recognize that a measure of center, and a measure of variation, each sum up a data set with one number |
 | 6.SP.B.4 | Display numerical data in dot plots, histograms and box plots |
 | 6.SP.B.5c | Give measures of center (median, mean) and variability (interquartile range, mean absolute deviation) |
+| 8.SP.A.1 | Investigate patterns in data (Level 7 reads trends in data graphed over time) |
 | HSS.ID.A.1 | Represent data with dot plots, histograms and box plots |
+| HSS.ID.A.2 | Compare center and spread, including standard deviation |
+| HSS.ID.A.3 | Interpret differences in shape, center and spread, including the effect of outliers |
+| HSS.ID.A.4 | Use the mean and standard deviation to fit a normal distribution and estimate percentages |
 
-Bar graphs, pie charts and line graphs are also taught, but they have no Common Core code of their own at these grades.
+Bar graphs and pie charts are also taught, but they have no Common Core code of their own at these grades.
 
 ## How it teaches
 
@@ -50,9 +55,9 @@ Bar graphs, pie charts and line graphs are also taught, but they have no Common 
 
 ## How the math was checked
 
-- **Test page:** [`tests.html`](https://jontaylormed.github.io/data-coach/tests.html) runs 60 tests in the browser and checks 2,070 random data sets against reference calculations. The tests cover statistical questions, which display and which measures fit, stem-and-leaf plots, pie fractions, mode, quartiles, the Lab's tally, typed answers and the worked examples. All pass.
-- **Build checks:** `build.ps1` fails if the tool would make a network request or store data, if any of 22 color pairs is below its contrast target, or if a button or heading is not in Title Case.
-- **Known limits:** quartiles leave the median out of both halves when the count is odd. Textbooks use more than one method, and others can give slightly different quartiles. Outliers use the 1.5 × IQR rule.
+- **Test page:** [`tests.html`](https://jontaylormed.github.io/data-coach/tests.html) runs 74 tests in the browser and checks 2,070 random data sets against reference calculations. The tests cover statistical questions, which display and which measures fit, stem-and-leaf plots, pie fractions, mode, quartiles, standard deviation, shape, the 68–95–99.7 rule, readings from graphs, trends, the Lab's tally, typed answers, every common mistake and the worked examples. All pass.
+- **Build checks:** `build.ps1` fails if the tool would make a network request or store data, if any of 22 color pairs is below its contrast target, if a button or heading is not in Title Case, or if any JavaScript file has a syntax error.
+- **Known limits:** quartiles leave the median out of both halves when the count is odd. Textbooks use more than one method, and others can give slightly different quartiles. Outliers use the 1.5 × IQR rule. Each standard deviation question names which one it wants: σ for a whole population (divide by n) or s for a sample (divide by n − 1).
 - **All data is made up** by the tool. None of it is real people's data.
 
 ## Accessibility
@@ -79,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 **Publishing:** GitHub Pages, deployed from the `main` branch at the repository root. `index.html` is committed already built, so GitHub needs no build step.
 
-You can send students to one spot by adding to the link: `#level=3`, `#level=3&start=practice`, `#level=3&start=check` or `#start=menu`.
+You can send students to one spot by adding to the link: `#level=3`, `#level=3&start=practice`, `#level=3&start=check`, `#start=mistakes&level=3` or `#start=menu`.
 
 ## License
 

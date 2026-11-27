@@ -10,7 +10,7 @@ $utf8 = New-Object Text.UTF8Encoding $false
 function Read-Src([string]$name) { [IO.File]::ReadAllText((Join-Path $src $name), $utf8) }
 
 # The engine, in load order: random data and scenarios, the measures and checking, the levels.
-$engine = (@('data.js', 'pics.js', 'stats.js', 'tasks.js', 'tasks-displays.js', 'tasks-spread.js') | ForEach-Object { Read-Src $_ }) -join "`n"
+$engine = (@('data.js', 'pics.js', 'stats.js', 'tasks.js', 'tasks-displays.js', 'tasks-spread.js', 'tasks-shape.js', 'mistakes.js') | ForEach-Object { Read-Src $_ }) -join "`n"
 $style = Read-Src 'style.css'; $template = Read-Src 'template.html'; $ui = (@('charts.js', 'ui.js') | ForEach-Object { Read-Src $_ }) -join "`n"
 $app = $template.Replace('/*STYLE*/', $style).Replace('/*ENGINE*/', $engine).Replace('/*UI*/', $ui)
 
@@ -69,10 +69,16 @@ foreach ($m in [regex]::Matches(($template + $ui), '<(button|summary|h2)[^>]*>([
 }
 if ($caseFail) { $caseFail | Sort-Object -Unique | ForEach-Object { "TITLE CASE FAILED: $_" } } else { 'Title Case check passed.' }
 
+# JavaScript syntax: every source file must parse (Windows' chakra.dll, through tools/jscheck.ps1). A missing bracket
+# or a comment that swallows code would otherwise pass this build and only show up as a test page stuck on "Running...".
+. (Join-Path $root 'tools\jscheck.ps1')
+$jsFail = @(Get-ChildItem $src -Filter *.js | ForEach-Object { Test-JsSyntax (Read-Src $_.Name) $_.Name } | Where-Object { $_ })
+if ($jsFail) { $jsFail | ForEach-Object { "SYNTAX CHECK FAILED: $_" } } else { "Syntax check passed: $(@(Get-ChildItem $src -Filter *.js).Count) JavaScript files parse." }
+
 # PowerShell 5.1 reads scripts saved without a byte-order mark as ANSI, so any character outside
 # ASCII in a .ps1 file is silently garbled. Every build script must stay ASCII.
 $nonAscii = Get-ChildItem $root, (Join-Path $root 'tools') -Filter *.ps1 |
   Where-Object { [IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 } | Select-Object -First 1 } | ForEach-Object { $_.Name }
 if ($nonAscii) { "ASCII CHECK FAILED: $($nonAscii -join ', ') (use HTML entities or [char] codes)" } else { 'ASCII check passed: every .ps1 file is plain ASCII.' }
 
-if ($bad -or $contrastFail -or $caseFail -or $nonAscii) { exit 1 }
+if ($bad -or $contrastFail -or $caseFail -or $jsFail -or $nonAscii) { exit 1 }

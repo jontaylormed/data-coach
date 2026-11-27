@@ -428,7 +428,7 @@
 
   // ---------- Level 7: change over time ----------
   t('Level 7: trends are clear, lines are drawable, and readings are accepted, on 120 seeds', () => {
-    const up = Spread.trendOf([50, 52, 51, 55, 57, 56, 60, 62]).kind, down = Spread.trendOf([70, 66, 67, 62, 60, 58]).kind, flat = Spread.trendOf([60, 62, 59, 61, 60, 62, 59, 61]).kind;
+    const up = Spread.trendOf([50, 52, 51, 55, 57, 56, 60, 62]).kind, down = Spread.trendOf([70, 66, 67, 62, 60, 58]).kind, flat = Spread.trendOf([60, 62, 59, 61, 60, 62, 61, 60]).kind;
     if (up !== 'up' || down !== 'down' || flat !== 'flat') return `trend kinds ${up} ${down} ${flat}`;
     for (let s = 0; s < 120; s++) for (const th of Tasks.level(7).themes) {
       const q = th.make(6000 + s, false);
@@ -483,6 +483,135 @@
       if (type === 'box' && f.fit !== (kind === 'num')) return `${k} box`;
       if (!f.fit && (q.ask !== 'choice' || q.choices.filter(c => c.right).length !== 1)) return `${k} ${type}: misfit question`;
       if (f.fit && q.ask !== type) return `${k} ${type}: should be drawn by the student`;
+    }
+    return true;
+  });
+
+  // ---------- Level 8: shape and the normal curve ----------
+  t('standard deviation: σ and s match a reference on 300 sets; the classic set has σ = 2; each slip is named', () => {
+    for (let s = 0; s < 300; s++) {
+      const v = Data.make(['height', 'points', 'dice', 'run'][s % 4], s, 3 + (s % 20)).values, n = v.length, m = v.reduce((a, b) => a + b, 0) / n;
+      let ss = 0; for (const x of v) ss += (x - m) * (x - m);
+      if (Math.abs(Stats.sd(v) - Math.sqrt(ss / n)) > 1e-9 || Math.abs(Stats.sd(v, true) - Math.sqrt(ss / (n - 1))) > 1e-9) return `set ${s}`;
+    }
+    const v = [2, 4, 4, 4, 5, 5, 7, 9], set = { key: 'freethrows', seed: 0, o: { skill: '50' }, values: v }, q = Shape.sdTask(set, false), qs = Shape.sdTask(set, true);
+    return Stats.sd(v) === 2 && q.check('2').status === 'right' && /variance/.test(q.check('4').msg) && /that is s/.test(q.check('2.1').msg) && /MAD/.test(q.check('1.5').msg)
+      && qs.check('2.1').status === 'right' && qs.check('2.14').status === 'right' && /that is σ/.test(qs.check('2').msg) || 'sd slips';
+  });
+  t('shape: 200-value sets have the shape asked for, the mean sits toward the tail, and symmetric sets keep them together', () => {
+    for (let s = 0; s < 60; s++) for (const k of ['sym', 'right', 'left']) {
+      const v = Shape.shapeSet(s, k, true).values, d = Stats.mean(v) - Stats.median(v);
+      if (Shape.shapeOf(v) !== k || v.length !== 200) return `${k} ${s}: shape`;
+      if (k === 'right' ? d <= 0 : k === 'left' ? d >= 0 : Math.abs(d) > 0.05 * Stats.sd(v)) return `${k} ${s}: mean and median`;
+    }
+    return true;
+  });
+  t('Level 8: every theme and check question has one right answer that passes, on 80 seeds; curves fit at the mean and σ and not at the start', () => {
+    const L = Tasks.level(8);
+    for (let s = 0; s < 80; s++) {
+      for (const th of L.themes) {
+        const q = th.make(8000 + s, s === 0);
+        if (q.ask === 'choice' && q.choices.filter(c => c.right).length !== 1) return `${th.key} ${s}: ${q.prompt}`;
+        if (q.ask === 'answer' && q.check(q.want).status !== 'right') return `${th.key} ${s}: "${q.want}"`;
+        if (q.ask === 'bar' && (q.check(q.counts.slice(), q.good).status !== 'right' || q.counts.reduce((a, b) => a + b, 0) !== 200)) return `table ${s}`;
+        if (q.ask === 'curve' && (q.check({ mu: q.mu, sd: q.sig }).status !== 'right' || q.check(q.start).status === 'right')) return `curve ${s}`;
+        if (q.ask === 'curve' && q.check({ mu: q.mu + q.sig, sd: q.sig }).status === 'right') return `curve ${s}: an off-center curve passes`;
+      }
+      for (const q of L.check(8500 + s)) if (q.ask === 'choice' ? q.choices.filter(c => c.right).length !== 1 : q.check(q.want).status !== 'right') return `check ${s}: ${q.prompt}`;
+    }
+    return true;
+  });
+  t('68-95-99.7: every rule question, as a percent and as a count, accepts its answer and names the one-side slip', () => {
+    for (const m of Shape.MODELS) for (const item of Shape.RULE) for (const count of [false, true]) {
+      const q = Shape.ruleTask(m, item, count);
+      if (q.check(q.want).status !== 'right') return `${item} ${count}: "${q.want}"`;
+    }
+    const above = Shape.ruleTask(Shape.MODELS[0], ['above', 1, null, 16], false), half = Shape.ruleTask(Shape.MODELS[0], ['between', 0, 1, 34], true);
+    return /one side/.test(above.check('32').msg) && /half/.test(half.check('136').msg) && /percent/.test(half.check('34').msg) || 'rule slips';
+  });
+  t('normal curve in the Lab: it fits only numbers with 50 or more values and no strong skew', () => {
+    for (const { k, o } of variants()) for (const n of [20, 200]) {
+      const set = Data.make(k, 5, n, o), f = Shape.fitOf(set), kind = Data.kindOf(set), q = Shape.labTask(set);
+      if (f.fit && (kind !== 'num' || n < 50)) return `${k} ${n}: should not fit`;
+      if (f.fit ? q.ask !== 'curve' : q.ask !== 'choice' || q.choices.filter(c => c.right).length !== 1) return `${k} ${n}: question`;
+    }
+    return Shape.fitOf(Data.make('height', 5, 200, { grade: '9' })).fit && !Shape.fitOf(Data.make('screen', 5, 200)).fit || 'height should fit, screen time should not';
+  });
+
+  // ---------- Common Mistakes ----------
+  t('common mistakes: every mistake, on 100 seeds, makes a question with one right choice, no repeated choices, and its mistake named', () => {
+    if (Mistakes.GROUPS.map(g => g.n).join() !== Tasks.LEVELS.map(l => l.n).join()) return 'a level has no mistakes';
+    for (const g of Mistakes.GROUPS) for (const m of g.list) for (let s = 0; s < 100; s++) {
+      const q = m.make(4000 + s), html = q.choices.map(c => c.html);
+      if (q.choices.filter(c => c.right).length !== 1) return `${m.name} ${s}: right choices`;
+      if (new Set(html).size !== html.length || q.choices.length < 2) return `${m.name} ${s}: choices ${html.join(' / ')}`;
+      if (!q.choices.some(c => !c.right && !c.almost && /<strong>/.test(c.msg))) return `${m.name} ${s}: no named mistake`;
+    }
+    return true;
+  });
+  t('common mistakes: the named mistake is really wrong (checked against the measures)', () => {
+    for (let s = 0; s < 100; s++) {
+      const md = Mistakes.GROUPS[2].list[0].make(s), mn = Mistakes.GROUPS[2].list[1].make(s), iqr = Mistakes.GROUPS[5].list[0].make(s), sd = Mistakes.GROUPS[7].list[1].make(s);
+      const right = q => q.choices.find(c => c.right).html;
+      if (+right(md) !== Stats.median(md.set.values) || +right(mn) !== Stats.mean(mn.set.values) || +right(iqr) !== Stats.iqr(iqr.set.values)) return `seed ${s}: a right answer is not the measure`;
+      if (+right(sd) !== Stats.round(Stats.sd(sd.set.values, true), 1)) return `seed ${s}: s`;
+    }
+    return true;
+  });
+
+  // ---------- Final review fixes ----------
+  t('readings of a difference never accept 0 or the wrong sign, and a careful reading still passes', () => {
+    for (let s = 0; s < 999; s++) {
+      const set = Data.make(['weather', 'plant', 'rainfall'][s % 3], s, [8, 14, 12][s % 3]), q = Spread.readLineTask(set, s, 'change');
+      if (!/how much/.test(q.prompt)) continue;
+      if (q.check('0').status === 'right' || q.check(String(-q.want)).status === 'right') return `change ${s}: ${q.prompt} want ${q.want} accepts 0 or ${-q.want}`;
+      if (q.check(q.want).status !== 'right') return `change ${s}: exact`;
+    }
+    for (let s = 0; s < 300; s++) { const q = Spread.readBoxTask(Data.make('height', s, 13), s); if (/IQR/.test(q.prompt) && q.check('0').status === 'right') return `IQR ${s} accepts 0`; }
+    return true;
+  });
+  t('trends are asked only when clear: the reviewers\' arch and level-ends lines are not called up or down', () => {
+    const arch = Spread.trendOf([47, 48, 52, 54, 55, 55, 48, 54, 55, 49, 49, 47, 47, 43]).kind, level = Spread.trendOf([64, 59, 59, 60, 63, 69, 68, 63, 66, 61, 66, 66, 68, 64]).kind;
+    if (arch === 'up' || arch === 'down' || level === 'up' || level === 'down') return `arch ${arch}, level ends ${level}`;
+    for (let s = 0; s < 200; s++) {
+      const q = Tasks.level(7).themes[1].make(7100 + s, false), v = q.data.chart.values, t3 = Math.floor(v.length / 3), ends = Stats.mean(v.slice(-t3)) - Stats.mean(v.slice(0, t3)), k = Spread.trendOf(v).kind;
+      if ((k === 'up' && ends <= 0) || (k === 'down' && ends >= 0)) return `trend ${s}: ${k} but the ends say otherwise`;
+    }
+    return true;
+  });
+  t('the Level 7 check reads one value and one change; outlier questions have outliers about half the time', () => {
+    for (let s = 0; s < 60; s++) { const c = Tasks.level(7).check(9100 + s); if (!/value (on|in)/.test(c[1].prompt) || !/how much|value (on|in)/.test(c[2].prompt)) return `check ${s}: ${c[1].prompt} / ${c[2].prompt}`; }
+    let withOut = 0; for (let s = 0; s < 200; s++) if (Stats.outliers(Tasks.level(6).themes[3].make(9300 + s, false).set.values).length) withOut++;
+    return withOut > 70 && withOut < 130 || `${withOut} of 200 outlier questions have outliers`;
+  });
+  t('a whisker is said to reach an outlier only on a side that has one', () => {
+    const q = Spread.boxTask({ key: 'travel', seed: 0, o: {}, values: [12, 15, 9, 14, 48, 11, 16, 13, 10] }), w = q.want.slice();
+    const lowRight = w.slice(); lowRight[4] = 20;   // the lower whisker right at 9 (the least value), the upper one wrong
+    const reach = w.slice(); reach[4] = 48;
+    return !/reaches an outlier/.test(q.check(lowRight).msg) && /reaches an outlier/.test(q.check(reach).msg) || `${q.check(lowRight).msg} / ${q.check(reach).msg}`;
+  });
+  t('the Lab never calls a bell-shaped scenario skewed: a normal curve fits heights, points, run times, sleep and hard-test scores at 50 values, every seed', () => {
+    for (const [k, o] of [['height', {}], ['points', {}], ['run', {}], ['sleep', {}], ['scores', { test: 'hard' }], ['shoes', {}]]) for (let s = 0; s < 150; s++) {
+      const set = Data.make(k, s, 50, o);
+      if (!Shape.fitOf(set).fit) return `${k} ${s}: called ${Shape.fitOf(set).short}`;
+    }
+    return !Shape.fitOf(Data.make('screen', 5, 200)).fit || 'screen time at 200 should be skewed';
+  });
+
+  t('outlier practice: every scenario comes both with outliers and without, so its name never gives the answer away', () => {
+    const seen = {};
+    for (let s = 0; s < 400; s++) { const q = Tasks.level(6).themes[3].make(9500 + s, false), k = q.set.key, has = Stats.outliers(q.set.values).length > 0; (seen[k] = seen[k] || new Set()).add(has); }
+    const one = Object.entries(seen).filter(([, v]) => v.size < 2).map(([k]) => k);
+    return Object.keys(seen).length >= 4 && !one.length || `only one kind for ${one.join(', ')} (${Object.keys(seen).join(', ')})`;
+  });
+
+  t('every worked example uses values its scenario can really make (a die never shows 7)', () => {
+    for (const lv of Tasks.LEVELS) for (const th of lv.themes) {
+      const q = th.make(0, true), set = q.set, sc = set && Data.SCENARIOS[set.key];
+      if (!sc || !sc.cats) continue;
+      const ok = sc.cats(Object.assign({}, Data.optsOf(set.key), set.o || {}));
+      const bad = set.values.filter(x => !ok.includes(x));
+      if (bad.length) return `Level ${lv.n} ${th.title}: ${set.key} can't make ${bad.join(', ')}`;
     }
     return true;
   });

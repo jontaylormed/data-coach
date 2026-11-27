@@ -17,7 +17,7 @@
   // A tally row names its value in words too: a die face with its number beside it.
   const rowName = (d, x) => { const p = Pics.value(d, x); return p && p.label ? `${p.html}<span>${esc(p.label)}</span>` : valueHtml(d, x); };
   // The tasks where the student draws a display.
-  const DRAW = ['bar', 'pie', 'dot', 'hist', 'stem', 'box', 'line'];
+  const DRAW = ['bar', 'pie', 'dot', 'hist', 'stem', 'box', 'line', 'curve'];
   let booting = true;                       // no focus moves while the page first loads (it would scroll the page the tool is embedded in)
   const focus = el => { if (!booting && el) setTimeout(() => el.focus(), 0); };
 
@@ -71,7 +71,13 @@
     const rows = [['Kind of Data', Tasks.KIND_NAME[kind]], ['Count', n]];
     if (kind === 'cat') rows.push([M.length > 1 ? 'Modes' : 'Mode', modeText], ['Mean and Median', 'They don’t fit categories: these are names or groups, with no amounts to add or to find the middle of.']);
     else rows.push(['Mean', Stats.meanText(Stats.mean(v))], ['Median', fmt(Stats.median(v))], [M.length > 1 ? 'Modes' : 'Mode', modeText]);
-    $('lab-measures').innerHTML = `<dl class="measures">${rows.map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join('')}</dl>${kind === 'time' ? '<p class="note">For data over time, how it changes (the trend) usually tells more. That comes in a later level.</p>' : ''}`;
+    if (kind !== 'cat' && n > 1) {
+      // Spread (Level 6) and the standard deviation and shape (Level 8).
+      const one = x => fmt(Stats.round(x, 1)), sh = typeof Shape !== 'undefined' && n >= 50 ? Shape.shapeOf(v) : null;
+      rows.push(['Range', fmt(Stats.range(v))], ['IQR', fmt(Stats.iqr(v))], ['MAD', Stats.meanText(Stats.mad(v))], ['Standard Deviation', `σ ≈ ${one(Stats.sd(v))} (all the values); s ≈ ${one(Stats.sd(v, true))} (as a sample)`]);
+      if (sh) rows.push(['Shape', { sym: 'About symmetric', right: 'Skewed right (a long tail of large values)', left: 'Skewed left (a long tail of small values)' }[sh]]);
+    }
+    $('lab-measures').innerHTML = `<dl class="measures">${rows.map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join('')}</dl>${kind === 'time' ? '<p class="note">For data over time, how it changes (the trend) usually tells more: try Line Graph or Quiz Me.</p>' : ''}`;
     $('lab-measures-box').open = false;
     // By hand: tallies up to 40 values, tables up to 60.
     const tallyOk = n <= 40, buildOk = n <= 60;
@@ -90,7 +96,8 @@
   const sayNote = msg => { $('lab-note').textContent = ''; setTimeout(() => { $('lab-note').textContent = msg; }, 60); };
   function openLab() { show('lab'); if (!lab.set) makeLab(); focus($('lab-title')); }
   function renderLearn() {
-    $('lab-learn').innerHTML = Tasks.LEVELS.map(l => `<button data-learn="${l.n}">Level ${l.n}: ${esc(l.title)}</button>`).join('');
+    $('lab-learn').innerHTML = Tasks.LEVELS.map(l => `<button data-learn="${l.n}">Level ${l.n}: ${esc(l.title)}</button>`).join('') + '<button id="lab-mist">Common Mistakes</button>';
+    $('lab-mist').addEventListener('click', () => startMistakes(1));
     $('lab-learn').querySelectorAll('[data-learn]').forEach(b => b.addEventListener('click', () => startLevel(+b.dataset.learn)));
   }
   // Work on the Lab's data in the lesson screen: a quiz question, a tally, or a table to build.
@@ -100,8 +107,8 @@
     if (kind === 'build' && $('lab-build').getAttribute('aria-disabled') === 'true') { sayNote('Make 60 or fewer values to build the table by hand.'); return; }
     if (['pie', 'dot', 'hist', 'stem', 'box', 'line'].includes(kind) && $('lab-' + kind).getAttribute('aria-disabled') === 'true') { sayNote('Make 60 or fewer values to draw this display by hand.'); return; }
     cur = { mode: 'lab', labKind: kind, lv: null };
-    const task = kind === 'quiz' ? Tasks.quiz(set, freshSeed()) : kind === 'tally' ? Tasks.tallyTask(set) : kind === 'build' ? Tasks.freqTask(set) : (kind === 'box' || kind === 'line' ? Spread.labTask(set, kind, freshSeed()) : Displays.labTask(set, kind));
-    open(task, { quiz: 'Quiz Me', tally: 'Tally It', build: 'Build the Table', bar: 'Bar Graph', pie: 'Pie Chart', dot: 'Dot Plot', hist: 'Histogram', stem: 'Stem-and-Leaf Plot', box: 'Box Plot', line: 'Line Graph' }[kind]);
+    const task = kind === 'quiz' ? Tasks.quiz(set, freshSeed()) : kind === 'tally' ? Tasks.tallyTask(set) : kind === 'build' ? Tasks.freqTask(set) : (kind === 'curve' ? Shape.labTask(set) : kind === 'box' || kind === 'line' ? Spread.labTask(set, kind, freshSeed()) : Displays.labTask(set, kind));
+    open(task, { quiz: 'Quiz Me', tally: 'Tally It', build: 'Build the Table', bar: 'Bar Graph', pie: 'Pie Chart', dot: 'Dot Plot', hist: 'Histogram', stem: 'Stem-and-Leaf Plot', box: 'Box Plot', line: 'Line Graph', curve: 'Normal Curve' }[kind]);
   }
 
   /* ---------- Lessons: where the student is ----------
@@ -119,6 +126,17 @@
     cur.ti = Math.floor(Math.random() * cur.lv.themes.length);
     open(cur.lv.themes[cur.ti].make(freshSeed(), false), 'More Practice');
   }
+  // Common Mistakes: a new question for each named mistake, with that mistake among the choices.
+  // Next gives another question for the same mistake; Next Mistake moves on (into the next level after the last).
+  function startMistakes(n, i = 0) {
+    const G = Mistakes.GROUPS, g = G.find(x => x.n === n) || G[0], k = i % g.list.length;
+    cur = { mode: 'mist', g, mi: k };
+    open(g.list[k].make(freshSeed()), `${g.list[k].name} (${k + 1} of ${g.list.length})`);
+  }
+  function nextMistake() {
+    const G = Mistakes.GROUPS, { g, mi } = cur;
+    if (mi + 1 < g.list.length) startMistakes(g.n, mi + 1); else startMistakes(G[(G.indexOf(g) + 1) % G.length].n, 0);
+  }
   function startCheck(n) {
     const lv = Tasks.level(n);
     cur = { lv, mode: 'check', list: lv.check(freshSeed()), ci: 0, score: 0 };
@@ -129,10 +147,10 @@
   function open(task, tag) {
     Object.assign(cur, { task, hintI: 0, stepI: 0, solved: false, tries: 0, solvedAt: 0 });
     show('lesson');
-    $('lesson-title').textContent = cur.mode === 'lab' ? 'Data Lab' : `Level ${cur.lv.n}: ${cur.lv.title}`;
+    $('lesson-title').textContent = cur.mode === 'lab' ? 'Data Lab' : cur.mode === 'mist' ? `Common Mistakes: Level ${cur.g.n}` : `Level ${cur.lv.n}: ${cur.lv.title}`;
     renderThemes();
     $('tag').textContent = tag;
-    $('intro').textContent = cur.mode === 'lesson' && cur.phase === 'example' ? cur.lv.themes[cur.ti].intro : '';
+    $('intro').textContent = cur.mode === 'lesson' && cur.phase === 'example' ? cur.lv.themes[cur.ti].intro : cur.mode === 'mist' ? 'Choose the right one. A wrong choice tells you which mistake it is.' : '';
     $('prompt').innerHTML = task.prompt;
     $('steps').innerHTML = ''; $('steps').hidden = true;
     say('');
@@ -146,7 +164,7 @@
     $('step').hidden = !(example || drawing || (task.ask === 'answer' && task.steps));
     $('quick').hidden = !drawing || example;
     // Drawing a graph: the table and the graph sit side by side where there is room (stacked on a phone).
-    $('pair').classList.toggle('side', drawing);
+    $('pair').classList.toggle('side', drawing && task.ask !== 'curve');   // a curve is drawn over its own histogram: nothing to sit beside
     $('back').hidden = cur.mode !== 'lab';
     $('next-row').hidden = true;
     if (example) say('Example: tap <strong>Show Next Step</strong> to see how it is done. You can also try it yourself.', 'info');
@@ -155,6 +173,12 @@
   }
   function renderThemes() {
     const box = $('themes');
+    if (cur.mode === 'mist') {
+      // The levels, to jump between (the current one marked).
+      box.innerHTML = Mistakes.GROUPS.map(G => `<button data-mg="${G.n}" aria-label="Level ${G.n}: ${esc(G.title)}"${G === cur.g ? ' aria-current="step"' : ''}>Level ${G.n}</button>`).join('');
+      box.querySelectorAll('[data-mg]').forEach(b => b.addEventListener('click', () => startMistakes(+b.dataset.mg)));
+      return;
+    }
     if (cur.mode !== 'lesson') { box.innerHTML = ''; return; }
     box.innerHTML = cur.lv.themes.map((t, i) => `<button data-ti="${i}"${i === cur.ti ? ' aria-current="step"' : ''}>${esc(t.title)}</button>`).join('');
     box.querySelectorAll('[data-ti]').forEach(b => b.addEventListener('click', () => startLevel(cur.lv.n, +b.dataset.ti)));
@@ -172,9 +196,11 @@
       const ty = cur.tally;
       const chips = d.list.map((x, i) => `<li class="${Pics.value(d, x) ? 'pic' : ''}${ty && i === ty.i ? ' now' : ty && i < ty.i ? ' used' : ''}"${ty && i === ty.i ? ' aria-current="true"' : ''}>${valueHtml(d, x)}${ty && i < ty.i ? '<span class="sr"> (tallied)</span>' : ''}</li>`).join('');
       box.innerHTML = `<div class="data">${what}<ul class="chips" aria-label="${d.list.length} values">${chips}</ul></div>`;
+    } else if (!d.table) {
+      box.innerHTML = `<div class="data">${what}</div>`;   // just what the data is (the picture is in the work area)
     } else {
       const { cats, cnts } = d.table;
-      box.innerHTML = `<div class="data">${what}<div class="data-scroll table-box" tabindex="0" role="region" aria-label="Frequency table"><table class="freq"><thead><tr><th scope="col">Value</th><th scope="col">Count</th></tr></thead><tbody>${cats.map((c, i) => `<tr><th scope="row">${esc(fmt(c))}</th><td>${cnts[i]}</td></tr>`).join('')}</tbody></table></div></div>`;
+      box.innerHTML = `<div class="data">${what}<div class="data-scroll table-box" tabindex="0" role="region" aria-label="Frequency table"><table class="freq"><thead><tr><th scope="col">${d.table.head || 'Value'}</th><th scope="col">Count</th></tr></thead><tbody>${cats.map((c, i) => `<tr><th scope="row">${esc(fmt(c))}</th><td>${cnts[i]}</td></tr>`).join('')}</tbody></table></div></div>`;
     }
   }
 
@@ -227,6 +253,11 @@
       cur.box = { values: [0.1, 0.3, 0.5, 0.7, 0.9].map(f => +(Math.round((lo + (hi - lo) * f) / t.snap) * t.snap).toFixed(6)) };
       box.innerHTML = '<div class="chart-box" id="chart-work"></div>';
       drawBox();
+    } else if (t.ask === 'curve') {
+      // The curve starts off to one side and too narrow; the student drags its center and spread.
+      cur.curve = { mu: t.start.mu, sd: t.start.sd };
+      box.innerHTML = '<div class="chart-box" id="chart-work"></div>';
+      drawCurve();
     } else if (t.ask === 'line') {
       cur.line = { values: t.labels.map(() => null) };
       box.innerHTML = '<div class="chart-box" id="chart-work"></div>';
@@ -239,6 +270,10 @@
   function drawBox() {
     const t = cur.task;
     Charts.boxPlot($('chart-work'), { axis: t.axis, values: cur.box.values, out: t.out, edit: !cur.solved, snap: t.snap, onChange: () => { if (!cur.solved) say(''); } });
+  }
+  function drawCurve() {
+    const t = cur.task;
+    Charts.curve($('chart-work'), Object.assign(cur.curve, t.chart, { edit: !cur.solved, snap: t.snap, onChange: () => { if (!cur.solved) say(''); } }));
   }
   function drawLine() {
     const t = cur.task;
@@ -269,7 +304,7 @@
   // ---------- Drawing a bar graph or a pie chart ----------
   function drawBar() {
     const t = cur.task, b = cur.bar;
-    Charts.bar($('chart-work'), { cats: t.cats, values: b.values, step: b.step, top: b.step ? t.top(b.step) : 1, edit: !cur.solved, onChange: () => { if (!cur.solved) say(''); } });
+    Charts.bar($('chart-work'), { cats: t.cats, values: b.values, step: b.step, top: b.step ? t.top(b.step) : 1, edit: !cur.solved, hist: t.hist, onChange: () => { if (!cur.solved) say(''); } });
   }
   function pickStep(s) {
     if (cur.solved) return;
@@ -286,7 +321,7 @@
     const t = cur.task;
     if (t.ask === 'bar' && !cur.bar.step) { say('Choose a scale for the count axis first.', 'info'); return; }
     if (t.ask === 'hist' && !cur.hist.w) { say('Choose a bin width first.', 'info'); return; }
-    const r = { bar: () => t.check(cur.bar.values, cur.bar.step), pie: () => t.check(cur.pie.values), dot: () => t.check(cur.dot.values), hist: () => t.check(cur.hist.values, cur.hist.w), stem: () => t.check(stemInputs().map(i => i.value)), box: () => t.check(cur.box.values), line: () => t.check(cur.line.values) }[t.ask]();
+    const r = { bar: () => t.check(cur.bar.values, cur.bar.step), pie: () => t.check(cur.pie.values), dot: () => t.check(cur.dot.values), hist: () => t.check(cur.hist.values, cur.hist.w), stem: () => t.check(stemInputs().map(i => i.value)), box: () => t.check(cur.box.values), line: () => t.check(cur.line.values), curve: () => t.check(cur.curve) }[t.ask]();
     if (r.status === 'right') { solved(esc(r.msg)); freeze(); return; }
     cur.tries++;
     say(esc(r.msg), KIND[r.status]);
@@ -300,6 +335,7 @@
     else if (t.ask === 'hist') drawHist();
     else if (t.ask === 'box') drawBox();
     else if (t.ask === 'line') drawLine();
+    else if (t.ask === 'curve') drawCurve();
     else stemInputs().forEach(i => { i.readOnly = true; });
   }
   // Show Next Step: the scale first, then one bar (or one pie edge) at a time. Quick Draw does it all at once.
@@ -330,6 +366,15 @@
       else { drawBox(); say(`${NAMES[i]}: ${fmt(t.want[i])}.`, 'info'); }
       return;
     }
+    if (t.ask === 'curve') {
+      // The center first (at the mean), then the spread (one standard deviation).
+      const c = cur.curve, tidy = x => +(Math.round(x / t.snap) * t.snap).toFixed(6), centerOk = Math.abs(c.mu - t.mu) <= 0.35 * t.sig;
+      if (all || !centerOk) c.mu = tidy(t.mu);
+      if (all || centerOk) c.sd = Math.max(t.snap, tidy(t.sig));
+      if (t.check(c).status === 'right') { solved(`That is the curve: centered at the mean, about ${fmt(Stats.round(t.mu, 1))}, with a spread of one standard deviation, about ${fmt(Stats.round(t.sig, 1))}.`, true); freeze(); }
+      else { drawCurve(); say(`The center goes at the mean: about ${fmt(Stats.round(t.mu, 1))}. Next, drag the spread handle out one standard deviation.`, 'info'); }
+      return;
+    }
     if (t.ask === 'line') {
       const v = cur.line.values, src = t.set.values, i = v.findIndex((x, j) => x === null || Math.abs(x - src[j]) > t.snap / 2 + 1e-9);
       const near = x => +(Math.round(x / t.snap) * t.snap).toFixed(6);
@@ -351,7 +396,7 @@
       if (all) t.counts.forEach((c, j) => { cur.bar.values[j] = c; }); else if (i >= 0) cur.bar.values[i] = t.counts[i];
       drawBar();
       const left = t.cats.some((c, j) => cur.bar.values[j] !== t.counts[j]);
-      if (!left) { solved(all ? 'Here is the bar graph: each bar reaches its count.' : 'That is the bar graph: each bar reaches its count.', true); drawBar(); }
+      if (!left) { const g = t.hist ? 'histogram' : 'bar graph'; solved(`${all ? 'Here' : 'That'} is the ${g}: each bar reaches its count.`, true); drawBar(); }
       else say(`${esc(fmt(t.cats[i]))}: ${t.counts[i]}, so its bar goes up to ${t.counts[i]} on the scale.`, 'info');
     } else {
       const k = t.cats.length, i = all ? k - 1 : t.cats.findIndex((c, j) => cur.pie.values[j] !== t.counts[j]);
@@ -371,8 +416,9 @@
       $('work').querySelectorAll('[data-c]').forEach(x => x.setAttribute('aria-disabled', 'true'));
       solved(c.msg || 'Right!');
     } else {
-      b.classList.add('wrong'); b.setAttribute('aria-disabled', 'true'); cur.tries++;
-      say(c.msg || 'Not this one.', 'bad');
+      // An almost-right choice (the right idea, a small slip) is marked Almost, not wrong.
+      b.classList.add(c.almost ? 'almost' : 'wrong'); b.setAttribute('aria-disabled', 'true'); cur.tries++;
+      say(`${c.almost ? 'Almost: ' : ''}${c.msg || 'Not this one.'}${cur.mode === 'mist' ? ' Choose again.' : ''}`, c.almost ? 'almost' : 'bad');
     }
   }
   function toggle(b) {
@@ -497,6 +543,7 @@
     let label, label2 = '';
     if (cur.mode === 'lesson') label = cur.phase === 'example' ? 'Your Turn' : cur.ti + 1 < cur.lv.themes.length ? `Next: ${cur.lv.themes[cur.ti + 1].title}` : 'Check Your Understanding';
     else if (cur.mode === 'practice') label = 'Another One';
+    else if (cur.mode === 'mist') { label = 'Another Like This'; label2 = 'Next Mistake'; }
     else if (cur.mode === 'lab') { label = cur.labKind === 'quiz' ? 'Another Question' : 'Back to the Lab'; label2 = cur.labKind === 'quiz' ? 'Back to the Lab' : ''; }
     else label = cur.ci + 1 < cur.list.length ? 'Next Question' : 'Finish';
     $('next').textContent = label;
@@ -511,6 +558,7 @@
       else if (cur.ti + 1 < cur.lv.themes.length) startLevel(cur.lv.n, cur.ti + 1);
       else startCheck(cur.lv.n);
     } else if (cur.mode === 'practice') practiceOne();
+    else if (cur.mode === 'mist') startMistakes(cur.g.n, cur.mi);
     else if (cur.mode === 'lab') { if (cur.labKind === 'quiz') labWork('quiz'); else openLab(); }
     else if (cur.ci + 1 < cur.list.length) { cur.ci++; open(cur.list[cur.ci], `Check ${cur.ci + 1} of ${cur.list.length}`); }
     else finished();
@@ -537,14 +585,15 @@
   $('lab-tally').addEventListener('click', () => labWork('tally'));
   $('lab-build').addEventListener('click', () => labWork('build'));
   $('lab-bar').addEventListener('click', () => labWork('bar'));
-  for (const d of ['pie', 'dot', 'hist', 'stem', 'box', 'line']) $('lab-' + d).addEventListener('click', () => labWork(d));
+  for (const d of ['pie', 'dot', 'hist', 'stem', 'box', 'line', 'curve']) $('lab-' + d).addEventListener('click', () => labWork(d));
   $('quick').addEventListener('click', () => { if (!cur.solved) drawStep(true); });
   $('check').addEventListener('click', checkNow);
   $('hint').addEventListener('click', hint);
   $('step').addEventListener('click', step);
   $('back').addEventListener('click', openLab);
   $('next').addEventListener('click', next);
-  $('next2').addEventListener('click', openLab);
+  $('next2').addEventListener('click', () => { if (Date.now() - cur.solvedAt < 400) return; if (cur.mode === 'mist') nextMistake(); else openLab(); });
+  $('go-mist').addEventListener('click', () => startMistakes(1));
   $('done-next').addEventListener('click', () => startLevel(cur.lv.n + 1));
   $('done-again').addEventListener('click', () => startCheck(cur.lv.n));
   $('done-practice').addEventListener('click', () => startPractice(cur.lv.n));
@@ -556,7 +605,8 @@
   (function route() {
     const h = new URLSearchParams((location.hash || '').replace(/^#/, '') || (window.name && window.name.includes('=') ? window.name : ''));
     const n = +h.get('level'), st = h.get('start');
-    if (n && Tasks.level(n)) (st === 'practice' ? startPractice(n) : st === 'check' ? startCheck(n) : startLevel(n));
+    if (st === 'mistakes') startMistakes(n || 1);
+    else if (n && Tasks.level(n)) (st === 'practice' ? startPractice(n) : st === 'check' ? startCheck(n) : startLevel(n));
     else if (st === 'menu') home();
     else openLab();
   })();
